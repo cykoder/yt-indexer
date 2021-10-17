@@ -223,7 +223,9 @@ async function main() {
 
   // Do some crawling
   console.log('Starting crawling...');
-  crawlRandomSearch(crawler, videosCollection);
+  if (!process.env.DISABLE_SEARCH) {
+    crawlRandomSearch(crawler, videosCollection);
+  }
   crawlYTVideo(crawler, videosCollection);
 
   // Start the progress bar with a total value of 100 and start value of 0
