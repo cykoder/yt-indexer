@@ -88,18 +88,9 @@ async function crawlRandomSearch(crawler, videosCollection) {
   const randomQueryString = wordsList[crypto.randomInt(0, wordsListCount)];
   console.log('Searching for:', randomQueryString);
 
-  const { data } = await searchYoutube(randomQueryString);
-  // TODO: we can use data.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].continuationItemRenderer
-  // to continue the search. check its properties
-
   // Get a list of video IDs from this mess of an API result
   try {
-    const videoList = data.contents.twoColumnSearchResultsRenderer
-      .primaryContents.sectionListRenderer.contents
-      .filter(item => !!item.itemSectionRenderer)[0]
-      .itemSectionRenderer.contents
-      .map(item => item.videoRenderer && item.videoRenderer.videoId);
-
+    const videoList = await searchYoutube(randomQueryString);
     for (let i = 0; i < videoList.length; i++) {
       const videoId = videoList[i];
       if (videoId) {
@@ -149,7 +140,7 @@ async function onCrawled(error, res, done, opts) {
     } else if (res.statusCode === 200) {
       const { title, author_name, author_url, thumbnail_url } = JSON.parse(res.body);
       const { crawler, videosCollection } = opts;
-      // console.log('\nCrawled URI:', videoUri)
+      console.log('\nIndexed URI:', videoUri)
 
       try {
         await videosCollection.updateOne({ uri: videoUri }, {

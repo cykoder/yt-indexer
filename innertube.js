@@ -44,12 +44,47 @@ const baseParams = {
   },
 };
 
-export default function searchYoutube(query) {
-  const searchParams = {
+const apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'; // TODO: fetch api key from youtube.com source code, extract "innertubeApiKey":"
+
+export async function loadContinuimVideos(query, continuation) {
+  const continueData = await axios.post('https://www.youtube.com/youtubei/v1/search?key=' + apiKey, {
+    ...baseParams,
+    continuation,
+  });
+
+  const continuedVideoList = continueData.data.onResponseReceivedCommands[0]
+    .appendContinuationItemsAction.continuationItems[0]
+    .itemSectionRenderer.contents
+    .map(item => item.videoRenderer && item.videoRenderer.videoId)
+    .filter(item => !!item);
+  return continuedVideoList;
+}
+
+export default async function searchYoutube(query) {
+  const { data } = await axios.post('https://www.youtube.com/youtubei/v1/search?key=' + apiKey, {
     ...baseParams,
     query,
-  };
+  });
 
-  const apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'; // TODO: fetch api key from youtube.com source code, extract "innertubeApiKey":" 
-  return axios.post('https://www.youtube.com/youtubei/v1/search?key=' + apiKey, searchParams);
+  let continuedVideos = [];
+  const estCount = parseInt(data.estimatedResults, 10);
+  if (estCount > 20) {
+    const continuation = data.contents.twoColumnSearchResultsRenderer.primaryContents
+      .sectionListRenderer.contents[1].continuationItemRenderer
+      .continuationEndpoint.continuationCommand.token;
+    try {
+      continuedVideos = await loadContinuimVideos(query, continuation);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  const videoList = data.contents.twoColumnSearchResultsRenderer
+    .primaryContents.sectionListRenderer.contents
+    .filter(item => !!item.itemSectionRenderer)[0]
+    .itemSectionRenderer.contents
+    .map(item => item.videoRenderer && item.videoRenderer.videoId)
+    .filter(item => !!item);
+
+  return [...videoList, ...continuedVideos];
 }
