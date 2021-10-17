@@ -3,13 +3,14 @@ import Crawler from 'crawler';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import crypto from 'crypto';
+import path from 'path';
 import fs from 'fs';
 import xmlParser from 'fast-xml-parser';
 import { SingleBar } from 'cli-progress';
 import { URL } from 'url';
 
 // Load config from .env
-dotenv.config();
+dotenv.config({ path: './.env' });
 
 // Load words list for random searches
 const wordsList = fs.readFileSync('./words.txt', {encoding:'utf8', flag:'r'}).split('\n');
@@ -137,7 +138,7 @@ async function onCrawled(error, res, done, opts) {
     } else if (res.statusCode === 200) {
       const { title, author_name, author_url, thumbnail_url } = JSON.parse(res.body);
       const { crawler, videosCollection } = opts;
-      console.log('\nCrawled URI:', videoUri)
+      // console.log('\nCrawled URI:', videoUri)
 
       try {
         await videosCollection.insertOne({
