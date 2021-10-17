@@ -67,19 +67,27 @@ function crawlYTVideo(crawler, id) {
 }
 
 async function crawlRandomSearch(crawler) {
+  if (!process.env.YT_API_KEY) {
+    return;
+  }
+
   const randomQueryString = randomChar() + randomChar() + randomChar(); // TODO: word dictionary?
-  const res = await axios.get(`https://www.googleapis.com/youtube/v3/search?key=${process.env.YT_API_KEY}&maxResults=50&part=snippet&type=video&q=${randomQueryString}`);
-  const { items } = res.data;
-  for (let i = 0; i < items.length; i++) {
-    const { videoId } = items[i].id;
-    if (videoId) {
-      crawlYTVideo(crawler, videoId);
+  try {
+    const res = await axios.get(`https://www.googleapis.com/youtube/v3/search?key=${process.env.YT_API_KEY}&maxResults=50&part=snippet&type=video&q=${randomQueryString}`);
+    const { items } = res.data;
+    for (let i = 0; i < items.length; i++) {
+      const { videoId } = items[i].id;
+      if (videoId) {
+        crawlYTVideo(crawler, videoId);
+      }
     }
+  } catch (e) {
+    console.error('Unable to crawl random search:', e.message)
   }
 
   setTimeout(() => {
     crawlRandomSearch(crawler);
-  }, 50);
+  }, 1000);
 }
 
 // Callback for when a page has been crawled
