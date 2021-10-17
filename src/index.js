@@ -99,8 +99,6 @@ async function onCrawled(error, res, done, opts) {
       return;
     }
 
-    console.log(uri);
-
     if (res.statusCode === 401 || res.body === 'Unauthorized') {
       // Unauthorized means that the video exists but is flagged as not embeddable
       // only way to get info would be through the youtube API - which we can do later
