@@ -84,6 +84,8 @@ async function crawlYTVideo(crawler, videosCollection, id) {
   }
 }
 
+// Gets a random word from the dictionary and searches it with the
+// innertube API. It will add the video uris to the crawler que at high priority
 async function crawlRandomSearch(crawler, videosCollection) {
   const randomQueryString = wordsList[crypto.randomInt(0, wordsListCount)];
   console.log('Searching for:', randomQueryString);
