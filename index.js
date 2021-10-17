@@ -13,11 +13,14 @@ import { URL } from 'url';
 dotenv.config({ path: './.env' });
 
 // Load words list for random searches
-const wordsList = fs.readFileSync('./words.txt', {encoding:'utf8', flag:'r'}).split('\n');
+const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).split('\n');
 const wordsListCount = wordsList.length;
 
 let urlCounter = 0; // Used to show progress in CLI
 const urlCountMax = 20000; // Max urls to store until cache reset
+
+// Random timeout for searches to spread requests across instances
+const randomSearchTimeout = Math.floor(4000 + Math.random() * 4000);
 
 // Create a new progress bar instance
 const bar1 = new SingleBar({}, {
@@ -102,7 +105,7 @@ async function crawlRandomSearch(crawler, videosCollection) {
 
   setTimeout(() => {
     crawlRandomSearch(crawler, videosCollection);
-  }, 1000);
+  }, randomSearchTimeout);
 }
 
 // Callback for when a page has been crawled
