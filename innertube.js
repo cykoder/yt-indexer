@@ -50,6 +50,6 @@ export default function searchYoutube(query) {
     query,
   };
 
-  const apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+  const apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'; // TODO: fetch api key from youtube.com source code, extract "innertubeApiKey":" 
   return axios.post('https://www.youtube.com/youtubei/v1/search?key=' + apiKey, searchParams);
 }

@@ -152,16 +152,17 @@ async function onCrawled(error, res, done, opts) {
       // console.log('\nCrawled URI:', videoUri)
 
       try {
-        await videosCollection.insertOne({
-          uri: videoUri,
-          title,
-          authorName: author_name,
-          authorUrl: author_url,
-          thumbnail: thumbnail_url,
-        });
+        await videosCollection.updateOne({ uri: videoUri }, {
+          $set: {
+            uri: videoUri,
+            title,
+            authorName: author_name,
+            authorUrl: author_url,
+            thumbnail: thumbnail_url,
+          },
+        }, { upsert: true });
       } catch (e) {
-        // console.error(e);
-        // Assume dupe key
+        console.error(e);
       }
 
       // Get RSS feed of channel and crawl their videos
