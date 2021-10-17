@@ -20,7 +20,7 @@ let urlCounter = 0; // Used to show progress in CLI
 const urlCountMax = 20000; // Max urls to store until cache reset
 
 // Random timeout for searches to spread requests across instances
-const randomSearchTimeout = Math.floor(4000 + Math.random() * 4000);
+const randomSearchTimeout = Math.floor(10000 + Math.random() * 10000);
 
 // Create a new progress bar instance
 const bar1 = new SingleBar({}, {
