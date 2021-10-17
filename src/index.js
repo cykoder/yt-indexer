@@ -41,7 +41,7 @@ function randomVideoId() {
     randomChar(), randomChar(), randomChar(), randomChar(),
     randomChar(), randomChar(), randomChar(),
   ];
-  return vidId.join('').replaceAll('=', '');
+  return vidId.join('');
 }
 
 // Puts a uri into crawl que and cache
