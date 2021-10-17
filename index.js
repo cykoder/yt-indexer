@@ -8,6 +8,7 @@ import fs from 'fs';
 import xmlParser from 'fast-xml-parser';
 import { SingleBar } from 'cli-progress';
 import { URL } from 'url';
+import searchYoutube from './innertube.js';
 
 // Load config from .env
 dotenv.config({ path: './.env' });
@@ -20,7 +21,7 @@ let urlCounter = 0; // Used to show progress in CLI
 const urlCountMax = 20000; // Max urls to store until cache reset
 
 // Random timeout for searches to spread requests across instances
-const randomSearchTimeout = Math.floor(10000 + Math.random() * 10000);
+const randomSearchTimeout = Math.floor(1000 + Math.random() * 2000);
 
 // Create a new progress bar instance
 const bar1 = new SingleBar({}, {
@@ -84,21 +85,28 @@ async function crawlYTVideo(crawler, videosCollection, id) {
 }
 
 async function crawlRandomSearch(crawler, videosCollection) {
-  if (!process.env.YT_API_KEY) {
-    return;
-  }
-
   const randomQueryString = wordsList[crypto.randomInt(0, wordsListCount)];
   console.log('Searching for:', randomQueryString);
+
+  const { data } = await searchYoutube(randomQueryString);
+  // TODO: we can use data.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].continuationItemRenderer
+  // to continue the search. check its properties
+
+  // Get a list of video IDs from this mess of an API result
   try {
-    const res = await axios.get(`https://www.googleapis.com/youtube/v3/search?key=${process.env.YT_API_KEY}&maxResults=50&part=snippet&type=video&q=${randomQueryString}`);
-    const { items } = res.data;
-    for (let i = 0; i < items.length; i++) {
-      const { videoId } = items[i].id;
+    const videoList = data.contents.twoColumnSearchResultsRenderer
+      .primaryContents.sectionListRenderer.contents
+      .filter(item => !!item.itemSectionRenderer)[0]
+      .itemSectionRenderer.contents
+      .map(item => item.videoRenderer && item.videoRenderer.videoId);
+
+    for (let i = 0; i < videoList.length; i++) {
+      const videoId = videoList[i];
       if (videoId) {
         crawlYTVideo(crawler, videosCollection, videoId);
       }
     }
+    console.log('Added', videoList.length, 'random videos');
   } catch (e) {
     console.error('Unable to crawl random search:', e.message)
   }
