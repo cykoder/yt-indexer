@@ -255,7 +255,8 @@ async function main() {
   });
 
   // Run the server!
-  fastify.listen(parseInt(process.env.PORT || 8080, 10) + parseInt(process.env.NODE_APP_INSTANCE || 0, 10), (err, address) => {
+  const serverPort = parseInt(process.env.PORT || 8080, 10) + parseInt(process.env.NODE_APP_INSTANCE || 0, 10);
+  fastify.listen(serverPort, process.env.BIND_IP || '0.0.0.0', (err, address) => {
     if (err) {
       throw err;
     }
