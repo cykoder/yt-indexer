@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import xmlParser from 'fast-xml-parser';
 import { SingleBar } from 'cli-progress';
+import Fastify from 'fastify';
 import { URL } from 'url';
 import searchYoutube from './innertube.js';
 
@@ -18,7 +19,7 @@ const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).
 const wordsListCount = wordsList.length;
 
 let urlCounter = 0; // Used to show progress in CLI
-const urlCountMax = 20000; // Max urls to store until cache reset
+const urlCountMax = 50000; // Max urls to store until cache reset
 
 // Random timeout for searches to spread requests across instances
 const randomSearchTimeout = Math.floor(2000 + Math.random() * 2000);
@@ -34,9 +35,14 @@ const bar1 = new SingleBar({}, {
 const url = process.env.MONGODB_URI;
 const client = new MongoClient(url);
 
-// Database Name
-const dbName = 'yt-indexer';
-const crawledURIs = []; // In memory cache of crawled URIs
+const dbName = 'yt-indexer'; // Database Name
+let crawledURIs = []; // In memory cache of crawled URIs
+let skipAddingNew = false;
+
+// Start web server for reporting
+const fastify = Fastify({
+  logger: true
+});
 
 // Generates a psuedo-random b64 char
 const baseAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -65,6 +71,16 @@ function crawlURI(crawler, uri, priority = 5) {
 // Takes a video ID (or generates a random one) and creates an oembed URI that we can use
 // to gather public metadata of the video. Then it will insert the URI into the crawler que
 async function crawlYTVideo(crawler, videosCollection, id) {
+  // If queue is already processing quite a few requests then dont generate
+  // random videos URIs. Set a timeout to check again later
+  if (!id && crawler.queueSize > 20) {
+    console.log('Queue size too large, skipping random video ID generation');
+    setTimeout(() => {
+      crawlYTVideo(crawler, videosCollection);
+    }, 5000);
+    return;
+  }
+
   // We use oembed here so that random video check requests dont effect our API rate limits if used
   const videoUri = `https://www.youtube.com/watch?v=${id || randomVideoId()}`;
   const url = `https://www.youtube.com/oembed?url=${videoUri}&format=json`;
@@ -87,27 +103,40 @@ async function crawlYTVideo(crawler, videosCollection, id) {
 // Gets a random word from the dictionary and searches it with the
 // innertube API. It will add the video uris to the crawler que at high priority
 async function crawlRandomSearch(crawler, videosCollection) {
-  const randomQueryString = wordsList[crypto.randomInt(0, wordsListCount)];
-  console.log('Searching for:', randomQueryString);
+  // Set skip adding new if que is too large until its nearly all been processed
+  if (!skipAddingNew && crawler.queueSize > 128) {
+    skipAddingNew = true;
+  } else if (skipAddingNew && crawler.queueSize <= 8) {
+    skipAddingNew = false;
+  }
 
-  // Get a list of video IDs from this mess of an API result
-  try {
-    const videoList = await searchYoutube(randomQueryString);
-    for (let i = 0; i < videoList.length; i++) {
-      const videoId = videoList[i];
-      if (videoId) {
-        crawlYTVideo(crawler, videosCollection, videoId);
+  // If que is growing too fast, dont perform more random searches
+  if (!skipAddingNew) {
+    const randomQueryString = wordsList[crypto.randomInt(0, wordsListCount)];
+    console.log('Searching for:', randomQueryString);
+
+    // Get a list of video IDs from this mess of an API result
+    try {
+      const videoList = await searchYoutube(randomQueryString);
+      for (let i = 0; i < videoList.length; i++) {
+        const videoId = videoList[i];
+        if (videoId) {
+          crawlYTVideo(crawler, videosCollection, videoId);
+        }
       }
+      console.log('Added', videoList.length, 'random videos');
+    } catch (e) {
+      console.error('Unable to crawl random search:', e.message)
     }
-    console.log('Added', videoList.length, 'random videos');
-  } catch (e) {
-    console.error('Unable to crawl random search:', e.message)
+  } else {
+    console.log('Queue size too large, skipping random video search');
   }
 
   setTimeout(() => {
     crawlRandomSearch(crawler, videosCollection);
   }, randomSearchTimeout);
 }
+
 
 // Callback for when a page has been crawled
 // typically would be omebed JSON or RSS feed
@@ -121,6 +150,7 @@ async function onCrawled(error, res, done, opts) {
 
   try {
     const { uri } = res.options;
+    const { crawler, videosCollection } = opts;
     const videoUri = uri.replace('https://www.youtube.com/oembed?url=', '');
     if (error) {
       console.error(error);
@@ -143,7 +173,6 @@ async function onCrawled(error, res, done, opts) {
       }
     } else if (res.statusCode === 200) {
       const { title, author_name, author_url, thumbnail_url } = JSON.parse(res.body);
-      const { crawler, videosCollection } = opts;
       // console.log('\nIndexed URI:', videoUri);
 
       try {
@@ -215,6 +244,24 @@ async function main() {
     },
     retries: 0,
     jQuery: false,
+  });
+
+  // Base stats rout
+  fastify.get('/', (request, reply) => {
+    reply.send({
+      total: crawledURIs.length,
+      queueSize: crawler.queueSize,
+      indexedCount: urlCounter,
+    });
+  });
+
+  // Run the server!
+  fastify.listen(parseInt(process.env.PORT || 8080, 10) + parseInt(process.env.NODE_APP_INSTANCE || 0, 10), (err, address) => {
+    if (err) {
+      throw err;
+    }
+
+    console.log(`Server is now listening on ${address}`);
   });
 
   // Do some crawling
