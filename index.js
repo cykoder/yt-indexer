@@ -225,10 +225,10 @@ async function main() {
 
   // Ensure DB indices exist
   await videosCollection.createIndex({ uri: 1 }, { unique: true });
-  await videosCollection.createIndex({ description: 1 });
-  await videosCollection.createIndex({ title: 1 });
-  await videosCollection.createIndex({ authorUrl: 1 });
-  await videosCollection.createIndex({ authorName: 1 });
+  await videosCollection.createIndex({ description: 'text' });
+  await videosCollection.createIndex({ title: 'text' });
+  await videosCollection.createIndex({ authorUrl: 'text' });
+  await videosCollection.createIndex({ authorName: 'text' });
 
   // Crawler object def
   const crawler = new Crawler({
