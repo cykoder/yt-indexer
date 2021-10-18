@@ -133,16 +133,18 @@ async function onCrawled(error, res, done, opts) {
       // so for now lets just store it in the database as a valid uri
       try {
         console.log('\nCrawled unauthed URI:', uri)
-        await videosCollection.insertOne({
-          uri: videoUri,
-        });
+        await videosCollection.updateOne({ uri: videoUri }, {
+          $set: {
+            uri: videoUri,
+          },
+        }, { upsert: true });
       } catch (e) {
-        // Assume dupe key
+        console.error(e);
       }
     } else if (res.statusCode === 200) {
       const { title, author_name, author_url, thumbnail_url } = JSON.parse(res.body);
       const { crawler, videosCollection } = opts;
-      console.log('\nIndexed URI:', videoUri)
+      // console.log('\nIndexed URI:', videoUri);
 
       try {
         await videosCollection.updateOne({ uri: videoUri }, {
