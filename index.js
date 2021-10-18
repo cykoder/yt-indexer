@@ -156,6 +156,11 @@ async function onCrawled(error, res, done, opts) {
         await videosCollection.updateOne({ uri: videoUri }, {
           $set: {
             uri: videoUri,
+            title: '',
+            authorName: '',
+            authorUrl: '',
+            thumbnail: '',
+            description: '',
           },
         }, { upsert: true });
       } catch (e) {
@@ -173,6 +178,7 @@ async function onCrawled(error, res, done, opts) {
             authorName: author_name,
             authorUrl: author_url,
             thumbnail: thumbnail_url,
+            description: '',
           },
         }, { upsert: true });
       } catch (e) {
@@ -224,13 +230,19 @@ async function main() {
   const videosCollection = db.collection('videos');
 
   // Ensure DB indices exist
+  console.log('Creating indices on collection...');
   await videosCollection.createIndex({ uri: 1 }, { unique: true });
-  await videosCollection.createIndex({ description: 'text' });
-  await videosCollection.createIndex({ title: 'text' });
-  await videosCollection.createIndex({ authorUrl: 'text' });
-  await videosCollection.createIndex({ authorName: 'text' });
+  await videosCollection.createIndex({
+    title: 'text',
+    authorUrl: 'text',
+    authorName: 'text',
+    description: 'text',
+  }, {
+    default_language: 'none',
+  });
 
   // Crawler object def
+  console.log('Creating crawler object...');
   const crawler = new Crawler({
     maxConnections: process.env.MAX_CONNECTIONS || 8,
     rateLimit: process.env.RATE_LIMIT || 50,
@@ -246,6 +258,7 @@ async function main() {
   });
 
   // Base stats rout
+  console.log('Initializing fastify...');
   fastify.get('/', (request, reply) => {
     reply.send({
       total: crawledURIs.length,
