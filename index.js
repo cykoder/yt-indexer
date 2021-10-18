@@ -143,6 +143,7 @@ async function onCrawled(error, res, done, opts) {
     if (error || res.statusCode === 500) {
       failedCounter++;
       console.error(error || `Server error: ${res.statusCode} ${res.body} ${uri}`);
+      done();
       return;
     }
 
