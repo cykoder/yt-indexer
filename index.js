@@ -6,7 +6,6 @@ import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import xmlParser from 'fast-xml-parser';
-import { SingleBar } from 'cli-progress';
 import Fastify from 'fastify';
 import { URL } from 'url';
 import searchYoutube from './innertube.js';
@@ -18,30 +17,24 @@ dotenv.config({ path: './.env' });
 const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).split('\n');
 const wordsListCount = wordsList.length;
 
-let urlCounter = 0; // Used to show progress in CLI
-const urlCountMax = 50000; // Max urls to store until cache reset
-
 // Random timeout for searches to spread requests across instances
 const randomSearchTimeout = Math.floor(2000 + Math.random() * 2000);
-
-// Create a new progress bar instance
-const bar1 = new SingleBar({}, {
-  format: ' {bar} {percentage}% | {value}/{total}',
-  barCompleteChar: '\u2588',
-  barIncompleteChar: '\u2591'
-});
 
 // Connection URL
 const url = process.env.MONGODB_URI;
 const client = new MongoClient(url);
 
 const dbName = 'yt-indexer'; // Database Name
+const urlCountMax = 50000; // Max urls to store until cache reset
+
 let crawledURIs = []; // In memory cache of crawled URIs
 let skipAddingNew = false;
+let failedCounter = 0;
+let urlCounter = 0;
 
 // Start web server for reporting
 const fastify = Fastify({
-  logger: true
+  logger: false
 });
 
 // Generates a psuedo-random b64 char
@@ -73,7 +66,7 @@ function crawlURI(crawler, uri, priority = 5) {
 async function crawlYTVideo(crawler, videosCollection, id) {
   // If queue is already processing quite a few requests then dont generate
   // random videos URIs. Set a timeout to check again later
-  if (!id && crawler.queueSize > 20) {
+  if (!id && (skipAddingNew || crawler.queueSize > 64)) {
     console.log('Queue size too large, skipping random video ID generation');
     setTimeout(() => {
       crawlYTVideo(crawler, videosCollection);
@@ -90,7 +83,9 @@ async function crawlYTVideo(crawler, videosCollection, id) {
       crawlURI(crawler, url, 1);
     }
   } else {
-    crawlURI(crawler, url);
+    // Insert with random priority so that we can still process
+    // some random URIs even if random search is producing alot of results
+    crawlURI(crawler, url, crypto.randomInt(1, 3));
   }
 
   if (!id) {
@@ -106,7 +101,7 @@ async function crawlRandomSearch(crawler, videosCollection) {
   // Set skip adding new if que is too large until its nearly all been processed
   if (!skipAddingNew && crawler.queueSize > 128) {
     skipAddingNew = true;
-  } else if (skipAddingNew && crawler.queueSize <= 8) {
+  } else if (skipAddingNew && crawler.queueSize <= 4) {
     skipAddingNew = false;
   }
 
@@ -141,19 +136,13 @@ async function crawlRandomSearch(crawler, videosCollection) {
 // Callback for when a page has been crawled
 // typically would be omebed JSON or RSS feed
 async function onCrawled(error, res, done, opts) {
-  urlCounter++;
-  if (urlCounter >= urlCountMax) {
-    urlCounter = 0;
-    crawledURIs = [];
-  }
-  bar1.update(urlCounter);
-
   try {
     const { uri } = res.options;
     const { crawler, videosCollection } = opts;
     const videoUri = uri.replace('https://www.youtube.com/oembed?url=', '');
-    if (error) {
-      console.error(error);
+    if (error || res.statusCode === 500) {
+      failedCounter++;
+      console.error(error || `Server error: ${res.statusCode} ${res.body} ${uri}`);
       return;
     }
 
@@ -208,9 +197,18 @@ async function onCrawled(error, res, done, opts) {
             });
         }
       }
+
+      urlCounter++;
+      if (urlCounter >= urlCountMax) {
+        urlCounter = 0;
+        crawledURIs = [];
+      }
+    } else {
+      failedCounter++;
     }
   } catch (e) {
     console.error(e);
+    failedCounter++;
   }
   done();
 }
@@ -252,6 +250,7 @@ async function main() {
       total: crawledURIs.length,
       queueSize: crawler.queueSize,
       indexedCount: urlCounter,
+      failed: failedCounter,
     });
   });
 
@@ -270,11 +269,6 @@ async function main() {
     crawlRandomSearch(crawler, videosCollection);
   }
   crawlYTVideo(crawler, videosCollection);
-
-  // Start the progress bar with a total value of 100 and start value of 0
-  bar1.start(urlCountMax, 0, {
-    speed: 'N/A'
-  });
 }
 
 main();
