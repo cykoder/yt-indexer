@@ -15,12 +15,15 @@ import searchYoutube from './innertube.js';
 // Load config from .env
 dotenv.config({ path: './.env' });
 
+// Numerical ID of this instance in cluster mode or 0 otherwise
+const clusterInstanceId = parseInt(process.env.NODE_APP_INSTANCE || 0, 10);
+
 // Load words list for random searches
 const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).split('\n');
 const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
-const randomSearchTimeout = Math.floor(2000 + Math.random() * 2000);
+const randomSearchTimeout = Math.floor(2000 + Math.random() * 2000 + clusterInstanceId * 2000);
 
 // Connection URL
 const url = process.env.MONGODB_URI;
@@ -149,57 +152,65 @@ async function crawlRandomYTSearch(crawler, videosCollection) {
   }, randomSearchTimeout);
 }
 
-async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequest) {
+async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequest = {
+  q: 'site:youtube.com/watch?v=' + randomChar(),
+}) {
   // Fire off a POST request to DuckDuckGo's HTML site with prebuilt params or a random query
-  const { data } = await axios({
-    method: 'POST',
-    url: 'https://html.duckduckgo.com/html/',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded'
-    },
-    data: qs.stringify(nextRequest || {
-      q: 'site:youtube.com/watch?v=' + randomChar(),
-    }),
-  });
-
-  // Parse HTML contents with cheerio to extract next request data
-  const $ = cheerio.load(data);
-  const nextFormInputFields = $('form[action=\'/html/\'] :input[type=hidden]');
-
-  let nextRequestData;
-  if (nextFormInputFields && nextFormInputFields.length > 0) {
-    nextRequestData = {};
-    nextFormInputFields.map((index) => {
-      const field = nextFormInputFields[index].attribs;
-      nextRequestData[field.name] = field.value;
-    });
+  let data;
+  try {
+    console.log('Searching DuckDuckGo for:', nextRequest.q)
+    data = (await axios({
+      method: 'POST',
+      url: 'https://html.duckduckgo.com/html/',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1',
+      },
+      data: qs.stringify(nextRequest),
+    })).data;
+  } catch (e) {
+    console.error('Unable to ping duckduckgo, error:', e.message, e.data);
   }
 
+  let nextRequestData;
+  if (data) {
+    // Parse HTML contents with cheerio to extract next request data
+    const $ = cheerio.load(data);
+    const nextFormInputFields = $('form[action=\'/html/\'] :input[type=hidden]');
 
-  // Extract all youtube video IDs from HTML
-  // then adds the known video IDs to the crawler
-  const ytUrlMatches = data.match(ytUrlRegex);
-  if (ytUrlMatches) {
-    const videoIds = ytUrlMatches.map(url => {
-      const urlIdMatches = url.match(ytVideoIDRegex);
-      if (urlIdMatches && urlIdMatches.length >= 2) {
-        const videoId = urlIdMatches[1].substr(0, 11);
-        return videoId;
-      }
-    })
-    .filter((url, index, self) => self.indexOf(url) === index);
+    if (nextFormInputFields && nextFormInputFields.length > 0) {
+      nextRequestData = {};
+      nextFormInputFields.map((index) => {
+        const field = nextFormInputFields[index].attribs;
+        nextRequestData[field.name] = field.value;
+      });
+    }
 
-    // Consider these URLS as highest priority (0)
-    videoIds.forEach(videoId => crawlYTVideo(crawler, videosCollection, videoId, 0));
-    console.log('Added', videoIds.length, 'duck videos');
-  } else {
-    console.log('Unable to parse duck YT matches');
+    // Extract all youtube video IDs from HTML
+    // then adds the known video IDs to the crawler
+    const ytUrlMatches = data.match(ytUrlRegex);
+    if (ytUrlMatches) {
+      const videoIds = ytUrlMatches.map(url => {
+        const urlIdMatches = url.match(ytVideoIDRegex);
+        if (urlIdMatches && urlIdMatches.length >= 2) {
+          const videoId = urlIdMatches[1].substr(0, 11);
+          return videoId;
+        }
+      })
+      .filter((url, index, self) => self.indexOf(url) === index);
+
+      // Consider these URLS as highest priority (0)
+      videoIds.forEach(videoId => crawlYTVideo(crawler, videosCollection, videoId, 0));
+      console.log('Added', videoIds.length, 'duck videos');
+    } else {
+      console.error('Unable to parse duck YT matches with data:', data);
+    }
   }
 
   // Wait a bit before searching next page
   setTimeout(() => {
     crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequestData);
-  }, randomSearchTimeout * 2);
+  }, randomSearchTimeout);
 }
 
 async function insertVideo(videosCollection, { uri, title = '', authorName = '', authorUrl = '', description = '' }) {
@@ -335,7 +346,7 @@ async function main() {
   });
 
   // Run the server!
-  const serverPort = parseInt(process.env.PORT || 8080, 10) + parseInt(process.env.NODE_APP_INSTANCE || 0, 10);
+  const serverPort = parseInt(process.env.PORT || 8080, 10) + clusterInstanceId;
   fastify.listen(serverPort, process.env.BIND_IP || '0.0.0.0', (err, address) => {
     if (err) {
       throw err;
@@ -347,7 +358,9 @@ async function main() {
   // Do some crawling
   console.log('Starting crawling...');
   if (!process.env.DISABLE_SEARCH) {
-    crawlRandomDuckDuckGoSearch(crawler, videosCollection);
+    setTimeout(() => {
+      crawlRandomDuckDuckGoSearch(crawler, videosCollection);
+    }, randomSearchTimeout);
     crawlRandomYTSearch(crawler, videosCollection);
   }
   crawlYTVideo(crawler, videosCollection);
