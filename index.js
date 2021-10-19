@@ -24,6 +24,7 @@ const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
 const randomSearchTimeout = Math.floor(2000 + Math.random() * 2000 + clusterInstanceId * 2000);
+const duckSearchTimeout = randomSearchTimeout * 2 + clusterInstanceId * 3000;
 
 // Connection URL
 const url = process.env.MONGODB_URI;
@@ -213,7 +214,7 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
   // Wait a bit before searching next page
   setTimeout(() => {
     crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequestData);
-  }, randomSearchTimeout);
+  }, duckSearchTimeout);
 }
 
 async function insertVideo(videosCollection, { uri, title = '', authorName = '', authorUrl = '', description = '' }) {
@@ -363,7 +364,7 @@ async function main() {
   if (!process.env.DISABLE_SEARCH) {
     setTimeout(() => {
       crawlRandomDuckDuckGoSearch(crawler, videosCollection);
-    }, randomSearchTimeout);
+    }, duckSearchTimeout);
     crawlRandomYTSearch(crawler, videosCollection);
   }
   crawlYTVideo(crawler, videosCollection);
