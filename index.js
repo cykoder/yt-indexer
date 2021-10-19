@@ -29,6 +29,12 @@ const client = new MongoClient(url);
 const dbName = 'yt-indexer'; // Database Name
 const urlCountMax = 50000; // Max urls to store until cache reset
 
+// Regex to extract all YouTube urls
+const ytUrlRegex = /(https?:\/\/([^=]*)youtu([^=]*)[^ ]*)/g;
+
+// Regex to extract YouTube video IDs
+const ytVideoIDRegex = /.*(?:youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#\&\?]*).*/;
+
 let crawledURIs = []; // In memory cache of crawled URIs
 let skipAddingNew = false;
 let failedCounter = 0;
@@ -159,32 +165,36 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
   // Parse HTML contents with cheerio to extract next request data
   const $ = cheerio.load(data);
   const nextFormInputFields = $('form[action=\'/html/\'] :input[type=hidden]');
-  const nextRequestData = {};
-  nextFormInputFields.map((index) => {
-    const field = nextFormInputFields[index].attribs;
-    nextRequestData[field.name] = field.value;
-  });
 
-  // Regex to extract all YouTube urls
-  const ytUrlRegex = /(https?:\/\/([^=]*)youtu([^=]*)[^ ]*)/g;
+  let nextRequestData;
+  if (nextFormInputFields && nextFormInputFields.length > 0) {
+    nextRequestData = {};
+    nextFormInputFields.map((index) => {
+      const field = nextFormInputFields[index].attribs;
+      nextRequestData[field.name] = field.value;
+    });
+  }
 
-  // Regex to extract YouTube video IDs
-  const ytVideoIDRegex = /.*(?:youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#\&\?]*).*/;
 
   // Extract all youtube video IDs from HTML
   // then adds the known video IDs to the crawler
-  const videoIds = data.match(ytUrlRegex).map(url => {
-    const urlIdMatches = url.match(ytVideoIDRegex);
-    if (urlIdMatches && urlIdMatches.length >= 2) {
-      const videoId = urlIdMatches[1].substr(0, 11);
-      return videoId;
-    }
-  })
-  .filter((url, index, self) => self.indexOf(url) === index);
+  const ytUrlMatches = data.match(ytUrlRegex);
+  if (ytUrlMatches) {
+    const videoIds = ytUrlMatches.map(url => {
+      const urlIdMatches = url.match(ytVideoIDRegex);
+      if (urlIdMatches && urlIdMatches.length >= 2) {
+        const videoId = urlIdMatches[1].substr(0, 11);
+        return videoId;
+      }
+    })
+    .filter((url, index, self) => self.indexOf(url) === index);
 
-  // Consider these URLS as highest priority (0)
-  videoIds.forEach(videoId => crawlYTVideo(crawler, videosCollection, videoId, 0));
-  console.log('Added', videoIds.length, 'duck videos');
+    // Consider these URLS as highest priority (0)
+    videoIds.forEach(videoId => crawlYTVideo(crawler, videosCollection, videoId, 0));
+    console.log('Added', videoIds.length, 'duck videos');
+  } else {
+    console.log('Unable to parse duck YT matches');
+  }
 
   // Wait a bit before searching next page
   setTimeout(() => {
@@ -226,11 +236,11 @@ async function onCrawled(error, res, done, opts) {
       // Unauthorized means that the video exists but is flagged as not embeddable
       // only way to get info would be through the youtube API - which we can do later
       // so for now lets just store it in the database as a valid uri
-      console.log('\nCrawled unauthed URI:', uri);
+      // console.log('\nCrawled unauthed URI:', uri);
       insertVideo(videosCollection, { uri: videoUri });
     } else if (res.statusCode === 200) {
       const { title, author_name, author_url } = JSON.parse(res.body);
-      console.log('\nIndexed URI:', videoUri);
+      // console.log('\nIndexed URI:', videoUri);
 
       // Insert video in the background
       insertVideo(videosCollection, {
