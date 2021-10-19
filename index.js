@@ -203,7 +203,10 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
       videoIds.forEach(videoId => crawlYTVideo(crawler, videosCollection, videoId, 0));
       console.log('Added', videoIds.length, 'duck videos');
     } else {
-      console.error('Unable to parse duck YT matches with data:', data);
+      console.error('Unable to parse duck YT matches, assuming no more results. Switching query...');
+      nextRequestData = {
+        q: 'site:youtube.com/watch?v=' + randomChar(),
+      };
     }
   }
 
