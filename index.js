@@ -23,7 +23,7 @@ const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).
 const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
-const randomSearchTimeout = Math.floor(2000 + Math.random() * 2000 + clusterInstanceId * 2000);
+const randomSearchTimeout = Math.floor(2000 + Math.random() * 1000 + clusterInstanceId * 2000);
 const duckSearchTimeout = randomSearchTimeout * 2 + clusterInstanceId * 3000;
 
 // Connection URL
@@ -165,7 +165,23 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
       url: 'https://html.duckduckgo.com/html/',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1',
+        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36',
+        'authority': 'html.duckduckgo.com',
+        'cache-control': 'max-age=0',
+        'sec-ch-ua': ';Not A Brand";v="99", "Chromium";v="94"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': 'Linux',
+        'origin': 'https://html.duckduckgo.com',
+        'upgrade-insecure-requests': '1',
+        'dnt': '1',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+        'sec-fetch-site': 'same-origin',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-user': '?1',
+        'sec-fetch-dest': 'document',
+        'referer': 'https://html.duckduckgo.com/',
+        'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+        'sec-gpc': '1',
       },
       data: qs.stringify(nextRequest),
     })).data;
@@ -205,9 +221,7 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
       console.log('Added', videoIds.length, 'duck videos');
     } else {
       console.error('Unable to parse duck YT matches, assuming no more results. Switching query...');
-      nextRequestData = {
-        q: 'site:youtube.com/watch?v=' + randomChar(),
-      };
+      nextRequestData = undefined;
     }
   }
 
@@ -365,7 +379,9 @@ async function main() {
     setTimeout(() => {
       crawlRandomDuckDuckGoSearch(crawler, videosCollection);
     }, duckSearchTimeout);
-    crawlRandomYTSearch(crawler, videosCollection);
+    setTimeout(() => {
+      crawlRandomYTSearch(crawler, videosCollection);
+    }, randomSearchTimeout);
   }
   crawlYTVideo(crawler, videosCollection);
 }
