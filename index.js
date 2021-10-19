@@ -24,7 +24,7 @@ const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
 const youtubeSearchTimeout = Math.floor(2000 + Math.random() * 1000 + clusterInstanceId * 1000);
-const duckSearchTimeout = Math.floor(15000 + Math.random() * 5000); // 15-20 seconds from start, duck has strict rate limits
+const duckSearchTimeout = Math.floor(20000 + Math.random() * 10000 + clusterInstanceId * 1000); // 20-30 seconds from start, duck has strict rate limits
 
 // Connection URL
 const url = process.env.MONGODB_URI;
@@ -393,12 +393,18 @@ async function main() {
   if (!process.env.DISABLE_SEARCH) {
     // Launch duck searches, for clusters we stagger the start so that
     // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
-    setTimeout(() => {
-      crawlRandomDuckDuckGoSearch(crawler, videosCollection);
-    }, clusterInstanceId * 7000); // Every 7 seconds a cluster instance will fire
-    setTimeout(() => {
-      crawlRandomYTSearch(crawler, videosCollection);
-    }, clusterInstanceId * 3000);
+    if (!process.env.DISABLE_DUCK_SEARCH) {
+      setTimeout(() => {
+        crawlRandomDuckDuckGoSearch(crawler, videosCollection);
+      }, clusterInstanceId * 7000); // Every 7 seconds a cluster instance will fire
+    }
+
+    // Launch YT searches
+    if (!process.env.DISABLE_YT_SEARCH) {
+      setTimeout(() => {
+        crawlRandomYTSearch(crawler, videosCollection);
+      }, clusterInstanceId * 3000);
+    }
   }
   crawlYTVideo(crawler, videosCollection);
 }
