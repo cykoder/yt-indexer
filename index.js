@@ -23,7 +23,7 @@ const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).
 const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
-const youtubeSearchTimeout = Math.floor(2000 + Math.random() * 1000 + clusterInstanceId * 1000);
+const youtubeSearchTimeout = Math.floor(1000 + Math.random() * 1000 + clusterInstanceId * 500);
 const duckSearchTimeout = Math.floor(20000 + Math.random() * 10000 + clusterInstanceId * 1000); // 20-30 seconds from start, duck has strict rate limits
 
 // Connection URL
@@ -41,15 +41,17 @@ const ytVideoIDRegex = /.*(?:youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#\&\?]*
 
 // List of possible user agents we can use to spoof requests
 const spoofUserAgents = [
-  'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.111 Safari/537.36',
+  'Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.111 Safari/537.36',
   'Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.64 Safari/537.36',
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36',
   'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:77.0) Gecko/20100101 Firefox/77.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:77.0) Gecko/20100101 Firefox/77.0',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36',
+  'Mozilla/5.0 (Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15',
+  'Mozilla/5.0 (Linux x86_64) Gecko/20100101 Firefox/77.0',
+  'Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36',
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:18.0) Gecko/20100101 Firefox/77.0',
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/77.0',
+  'Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36',
+  'Mozilla/5.0',
 ];
 
 let crawledURIs = []; // In memory cache of crawled URIs
@@ -169,19 +171,28 @@ async function crawlRandomYTSearch(crawler, videosCollection) {
 async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequest = {
   q: 'site:youtube.com/watch?v=' + randomChar(),
 }) {
+  // Should we skip searches to let the que process?
+  if (skipAddingNew) {
+    setTimeout(() => {
+      crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequest);
+    }, duckSearchTimeout);
+    return;
+  }
+
   // Fire off a POST request to DuckDuckGo's HTML site with prebuilt params or a random query
   let data;
   try {
-    console.log('Searching DuckDuckGo for:', nextRequest.q, nextRequest.s)
+    const userAgent = spoofUserAgents[crypto.randomInt(0, spoofUserAgents.length - 1)];
+    console.log('Searching DuckDuckGo for:', nextRequest.q, nextRequest.s, userAgent)
     data = (await axios({
       method: 'POST',
       url: 'https://html.duckduckgo.com/html/',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        'user-agent': spoofUserAgents[Math.floor(Math.random() * (spoofUserAgents.length - 1))],
+        'user-agent': userAgent,
         'authority': 'html.duckduckgo.com',
         'cache-control': 'max-age=0',
-        'sec-ch-ua': ';Not A Brand";v="99", "Chromium";v="94"',
+        'sec-ch-ua': userAgent,
         'sec-ch-ua-mobile': '?0',
         'sec-ch-ua-platform': 'Linux',
         'origin': 'https://html.duckduckgo.com',
@@ -295,7 +306,7 @@ async function onCrawled(error, res, done, opts) {
 
       // Get RSS feed of channel and crawl their videos
       const ytChannelStr = 'https://www.youtube.com/channel/';
-      if (author_url.substr(0, ytChannelStr.length) === ytChannelStr) {
+      if (!skipAddingNew && author_url.substr(0, ytChannelStr.length) === ytChannelStr) {
         const channelId = author_url.substr(ytChannelStr.length);
         const rssUri = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
         if (crawledURIs.indexOf(rssUri) === -1) {
@@ -303,12 +314,14 @@ async function onCrawled(error, res, done, opts) {
           axios.get(rssUri)
             .then(feedResponse => {
               const { feed } = xmlParser.parse(feedResponse.data, {});
-              for (let i = 0; i < feed.entry.length; i++) {
+              const videoCount = feed.entry.length;
+              for (let i = 0; i < videoCount; i++) {
                 const feedItem = feed.entry[i];
                 if (feedItem && feedItem['yt:videoId']) {
                   crawlYTVideo(crawler, videosCollection, feedItem['yt:videoId']);
                 }
               }
+              console.log('Added', videoCount, 'channel videos for channel:', channelId)
             });
         }
       }
