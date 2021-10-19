@@ -24,7 +24,7 @@ const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
 const youtubeSearchTimeout = Math.floor(2000 + Math.random() * 1000 + clusterInstanceId * 1000);
-const duckSearchTimeout = Math.floor(20000 + Math.random() * 10000); // 20-30 seconds from start, duck has high rate limits
+const duckSearchTimeout = Math.floor(15000 + Math.random() * 5000); // 15-20 seconds from start, duck has strict rate limits
 
 // Connection URL
 const url = process.env.MONGODB_URI;
@@ -38,6 +38,19 @@ const ytUrlRegex = /(https?:\/\/([^=]*)youtu([^=]*)[^ ]*)/g;
 
 // Regex to extract YouTube video IDs
 const ytVideoIDRegex = /.*(?:youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#\&\?]*).*/;
+
+// List of possible user agents we can use to spoof requests
+const spoofUserAgents = [
+  'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.111 Safari/537.36',
+  'Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.64 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36',
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:77.0) Gecko/20100101 Firefox/77.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:77.0) Gecko/20100101 Firefox/77.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36',
+];
 
 let crawledURIs = []; // In memory cache of crawled URIs
 let skipAddingNew = false;
@@ -165,7 +178,7 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
       url: 'https://html.duckduckgo.com/html/',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36',
+        'user-agent': spoofUserAgents[Math.floor(Math.random() * (spoofUserAgents.length - 1))],
         'authority': 'html.duckduckgo.com',
         'cache-control': 'max-age=0',
         'sec-ch-ua': ';Not A Brand";v="99", "Chromium";v="94"',
@@ -375,8 +388,8 @@ async function main() {
 
   // Do some crawling
   console.log('Starting crawling...');
-  console.log('youtubeSearchTimeout', youtubeSearchTimeout)
-  console.log('duckSearchTimeout', duckSearchTimeout)
+  console.log('Youtube timeout:', youtubeSearchTimeout / 1000)
+  console.log('Duck timeout:', duckSearchTimeout / 1000)
   if (!process.env.DISABLE_SEARCH) {
     // Launch duck searches, for clusters we stagger the start so that
     // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
