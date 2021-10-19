@@ -23,8 +23,8 @@ const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).
 const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
-const randomSearchTimeout = Math.floor(2000 + Math.random() * 1000 + clusterInstanceId * 2000);
-const duckSearchTimeout = randomSearchTimeout * 2 + clusterInstanceId * 3000;
+const youtubeSearchTimeout = Math.floor(2000 + Math.random() * 1000 + clusterInstanceId * 1000);
+const duckSearchTimeout = Math.floor(20000 + Math.random() * 10000); // 20-30 seconds from start, duck has high rate limits
 
 // Connection URL
 const url = process.env.MONGODB_URI;
@@ -150,7 +150,7 @@ async function crawlRandomYTSearch(crawler, videosCollection) {
 
   setTimeout(() => {
     crawlRandomYTSearch(crawler, videosCollection);
-  }, randomSearchTimeout);
+  }, youtubeSearchTimeout);
 }
 
 async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequest = {
@@ -159,7 +159,7 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
   // Fire off a POST request to DuckDuckGo's HTML site with prebuilt params or a random query
   let data;
   try {
-    console.log('Searching DuckDuckGo for:', nextRequest.q)
+    console.log('Searching DuckDuckGo for:', nextRequest.q, nextRequest.s)
     data = (await axios({
       method: 'POST',
       url: 'https://html.duckduckgo.com/html/',
@@ -375,13 +375,17 @@ async function main() {
 
   // Do some crawling
   console.log('Starting crawling...');
+  console.log('youtubeSearchTimeout', youtubeSearchTimeout)
+  console.log('duckSearchTimeout', duckSearchTimeout)
   if (!process.env.DISABLE_SEARCH) {
+    // Launch duck searches, for clusters we stagger the start so that
+    // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
     setTimeout(() => {
       crawlRandomDuckDuckGoSearch(crawler, videosCollection);
-    }, duckSearchTimeout);
+    }, clusterInstanceId * 7000); // Every 7 seconds a cluster instance will fire
     setTimeout(() => {
       crawlRandomYTSearch(crawler, videosCollection);
-    }, randomSearchTimeout);
+    }, clusterInstanceId * 3000);
   }
   crawlYTVideo(crawler, videosCollection);
 }
