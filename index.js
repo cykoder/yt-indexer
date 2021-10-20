@@ -10,6 +10,7 @@ import Fastify from 'fastify';
 import qs from 'qs';
 import cheerio from 'cheerio';
 import { URL } from 'url';
+import randomUseragent from 'random-useragent';
 import searchYoutube from './innertube.js';
 
 // Load config from .env
@@ -23,8 +24,8 @@ const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).
 const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
-const youtubeSearchTimeout = Math.floor(1000 + Math.random() * 1000 + clusterInstanceId * 500);
-const duckSearchTimeout = Math.floor(20000 + Math.random() * 10000 + clusterInstanceId * 1000); // 20-30 seconds from start, duck has strict rate limits
+const youtubeSearchTimeout = () => Math.floor(1000 + Math.random() * 1000);
+const duckSearchTimeout = (rateLimited) => Math.floor(20000 + Math.random() * 30000) + (rateLimited ? 60000 : 0);
 
 // Connection URL
 const url = process.env.MONGODB_URI;
@@ -38,21 +39,6 @@ const ytUrlRegex = /(https?:\/\/([^=]*)youtu([^=]*)[^ ]*)/g;
 
 // Regex to extract YouTube video IDs
 const ytVideoIDRegex = /.*(?:youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#\&\?]*).*/;
-
-// List of possible user agents we can use to spoof requests
-const spoofUserAgents = [
-  'Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.111 Safari/537.36',
-  'Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.64 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36',
-  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1',
-  'Mozilla/5.0 (Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15',
-  'Mozilla/5.0 (Linux x86_64) Gecko/20100101 Firefox/77.0',
-  'Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36',
-  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:18.0) Gecko/20100101 Firefox/77.0',
-  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/77.0',
-  'Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36',
-  'Mozilla/5.0',
-];
 
 let crawledURIs = []; // In memory cache of crawled URIs
 let skipAddingNew = false;
@@ -113,9 +99,18 @@ async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
   const videoUri = buildVideoUri(id || randomVideoId());
   const url = `https://www.youtube.com/oembed?url=${videoUri}&format=json`;
   if (id) { // Insert known ID with a high priority (1) to the crawler
+    if (crawledURIs.indexOf(url) !== -1) { // Early out if already crawled/crawling
+      return;
+    }
+
+    // Check video URI doesnt exist in database with information before adding to crawler
     const videoUri = cleanYTUri(url);
-    insertVideo(videosCollection, { uri: videoUri });
-    crawlURI(crawler, url, highPriority);
+    const foundVideo = await videosCollection.count({ uri: videoUri, title: {'$exists': true, '$ne' : ''}});
+    if (foundVideo === 0) {
+      // Insert video uri incase of program exit so that valid URL is saved somewhere
+      insertVideo(videosCollection, { uri: videoUri });
+      crawlURI(crawler, url, highPriority);
+    }
   } else {
     // Insert with random priority so that we can still process
     // some random URIs even if random search is producing alot of results
@@ -131,6 +126,23 @@ async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
   }
 }
 
+async function addFromYoutubeSearch(crawler, videosCollection, randomQueryString) {
+    console.log('Searching YouTube for:', randomQueryString);
+
+    try {
+      const videoList = await searchYoutube(randomQueryString);
+      for (let i = 0; i < videoList.length; i++) {
+        const videoId = videoList[i];
+        if (videoId) {
+          crawlYTVideo(crawler, videosCollection, videoId);
+        }
+      }
+      console.log('Added', videoList.length, 'videos with query', randomQueryString);
+    } catch (e) {
+      console.error('Unable to crawl random search:', e.message)
+    }
+}
+
 // Gets a random word from the dictionary and searches it with the
 // innertube API. It will add the video uris to the crawler que at high priority
 async function crawlRandomYTSearch(crawler, videosCollection) {
@@ -141,31 +153,18 @@ async function crawlRandomYTSearch(crawler, videosCollection) {
     skipAddingNew = false;
   }
 
+  // Set to fire this method again soon
+  setTimeout(() => {
+    crawlRandomYTSearch(crawler, videosCollection);
+  }, youtubeSearchTimeout());
+
   // If que is growing too fast, dont perform more random searches
   if (!skipAddingNew) {
     const randomQueryString = wordsList[crypto.randomInt(0, wordsListCount)];
-    console.log('Searching YouTube for:', randomQueryString);
-
-    // Get a list of video IDs from this mess of an API result
-    try {
-      const videoList = await searchYoutube(randomQueryString);
-      for (let i = 0; i < videoList.length; i++) {
-        const videoId = videoList[i];
-        if (videoId) {
-          crawlYTVideo(crawler, videosCollection, videoId);
-        }
-      }
-      console.log('Added', videoList.length, 'random videos');
-    } catch (e) {
-      console.error('Unable to crawl random search:', e.message)
-    }
+    await addFromYoutubeSearch(crawler, videosCollection, randomQueryString);
   } else {
     console.log('Queue size too large, skipping random video search');
   }
-
-  setTimeout(() => {
-    crawlRandomYTSearch(crawler, videosCollection);
-  }, youtubeSearchTimeout);
 }
 
 async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequest = {
@@ -175,14 +174,16 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
   if (skipAddingNew) {
     setTimeout(() => {
       crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequest);
-    }, duckSearchTimeout);
+    }, duckSearchTimeout());
     return;
   }
 
   // Fire off a POST request to DuckDuckGo's HTML site with prebuilt params or a random query
   let data;
+  let userAgent;
+  let isRateLimited = false;
   try {
-    const userAgent = spoofUserAgents[crypto.randomInt(0, spoofUserAgents.length - 1)];
+    userAgent = nextRequest.userAgent || randomUseragent.getRandom();
     console.log('Searching DuckDuckGo for:', nextRequest.q, nextRequest.s, userAgent)
     data = (await axios({
       method: 'POST',
@@ -192,9 +193,6 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
         'user-agent': userAgent,
         'authority': 'html.duckduckgo.com',
         'cache-control': 'max-age=0',
-        'sec-ch-ua': userAgent,
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': 'Linux',
         'origin': 'https://html.duckduckgo.com',
         'upgrade-insecure-requests': '1',
         'dnt': '1',
@@ -211,6 +209,7 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
     })).data;
   } catch (e) {
     console.error('Unable to ping duckduckgo, error:', e.message, e.data);
+    isRateLimited = true;
   }
 
   let nextRequestData;
@@ -220,7 +219,7 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
     const nextFormInputFields = $('form[action=\'/html/\'] :input[type=hidden]');
 
     if (nextFormInputFields && nextFormInputFields.length > 0) {
-      nextRequestData = {};
+      nextRequestData = { userAgent };
       nextFormInputFields.map((index) => {
         const field = nextFormInputFields[index].attribs;
         nextRequestData[field.name] = field.value;
@@ -252,7 +251,7 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
   // Wait a bit before searching next page
   setTimeout(() => {
     crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextRequestData);
-  }, duckSearchTimeout);
+  }, duckSearchTimeout(isRateLimited));
 }
 
 async function insertVideo(videosCollection, { uri, title = '', authorName = '', authorUrl = '', description = '' }) {
@@ -341,6 +340,24 @@ async function onCrawled(error, res, done, opts) {
   done();
 }
 
+// Crawls user inputted queries from the database
+async function crawlQueries(crawler, videosCollection, queriesCollection) {
+  // Fire this method again in a little bit to check for more queries
+  setTimeout(() => {
+    crawlQueries(crawler, videosCollection, queriesCollection);
+  }, youtubeSearchTimeout() * 2);
+
+  // Should we skip searches to let the que process?
+  if (!skipAddingNew) {
+    // Find a query that has not been crawled yet, set its status as crawled and then search youtube
+    const uncrawledQuery = (await queriesCollection.find({ crawlDate: { $exists: false } }).limit(1).toArray())[0];
+    if (uncrawledQuery) {
+      queriesCollection.updateOne({ _id: uncrawledQuery._id }, { $set: { crawlDate: new Date() } });
+      await addFromYoutubeSearch(crawler, videosCollection, uncrawledQuery.query);
+    }
+  }
+}
+
 async function main() {
   // Connect to MongoDB
   await client.connect();
@@ -349,9 +366,13 @@ async function main() {
   // Select database and videos collection
   const db = client.db(dbName);
   const videosCollection = db.collection('videos');
+  const queriesCollection = db.collection('queries');
 
   // Ensure DB indices exist
-  console.log('Creating indices on collection...');
+  console.log('Creating indices on queries collection...');
+  await queriesCollection.createIndex({ query: 1 }, { unique: true });
+
+  console.log('Creating indices on videos collection...');
   await videosCollection.createIndex({ uri: 1 }, { unique: true });
   await videosCollection.createIndex({
     title: 'text',
@@ -367,7 +388,7 @@ async function main() {
   const crawler = new Crawler({
     maxConnections: process.env.MAX_CONNECTIONS || 8,
     rateLimit: process.env.RATE_LIMIT || 50,
-    timeout: 5000,
+    timeout: 7500,
     callback: (error, res, done) => {
       return onCrawled(error, res, done, {
         videosCollection,
@@ -401,15 +422,13 @@ async function main() {
 
   // Do some crawling
   console.log('Starting crawling...');
-  console.log('Youtube timeout:', youtubeSearchTimeout / 1000)
-  console.log('Duck timeout:', duckSearchTimeout / 1000)
   if (!process.env.DISABLE_SEARCH) {
     // Launch duck searches, for clusters we stagger the start so that
     // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
     if (!process.env.DISABLE_DUCK_SEARCH) {
       setTimeout(() => {
         crawlRandomDuckDuckGoSearch(crawler, videosCollection);
-      }, clusterInstanceId * 7000); // Every 7 seconds a cluster instance will fire
+      }, clusterInstanceId * 10000); // Every 10 seconds a cluster instance will fire, immediate for ID 0
     }
 
     // Launch YT searches
@@ -419,7 +438,14 @@ async function main() {
       }, clusterInstanceId * 3000);
     }
   }
-  crawlYTVideo(crawler, videosCollection);
+
+  if (!process.env.DISABLE_RANDOMHASH) {
+    crawlYTVideo(crawler, videosCollection);
+  }
+
+  if (!process.env.DISABLE_MANUALQUERY) {
+    crawlQueries(crawler, videosCollection, queriesCollection);
+  }
 }
 
 main();
