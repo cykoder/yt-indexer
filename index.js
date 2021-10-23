@@ -11,7 +11,7 @@ import qs from 'qs';
 import cheerio from 'cheerio';
 import { URL } from 'url';
 import randomUseragent from 'random-useragent';
-import searchYoutube from './innertube.js';
+import { searchYoutube, getQuerySuggestions } from './innertube.js';
 
 // Load config from .env
 dotenv.config({ path: './.env' });
@@ -24,7 +24,8 @@ const wordsList = fs.readFileSync('./words.txt', {encoding: 'utf8', flag: 'r'}).
 const wordsListCount = wordsList.length;
 
 // Random timeout for searches to spread requests across instances
-const youtubeSearchTimeout = () => Math.floor(1000 + Math.random() * 1000);
+const YOUTUBE_TIMEOUT_MIN = parseInt(process.env.YOUTUBE_TIMEOUT_MIN || 500, 10);
+const youtubeSearchTimeout = () => Math.floor(YOUTUBE_TIMEOUT_MIN + Math.random() * YOUTUBE_TIMEOUT_MIN);
 const duckSearchTimeout = (rateLimited) => Math.floor(20000 + Math.random() * 30000) + (rateLimited ? 60000 : 0);
 
 // Connection URL
@@ -44,6 +45,7 @@ let crawledURIs = []; // In memory cache of crawled URIs
 let skipAddingNew = false;
 let failedCounter = 0;
 let urlCounter = 0;
+const suggestedQueries = [];
 
 // Start web server for reporting
 const fastify = Fastify({
@@ -70,7 +72,10 @@ function randomVideoId() {
 function crawlURI(crawler, uri, priority = 5) {
   if (crawledURIs.indexOf(uri) === -1) {
     crawledURIs.push(uri);
-    crawler.queue(uri, { priority });
+
+    if (!process.env.DISABLE_METADATA_GATHER) {
+      crawler.queue(uri, { priority });
+    }
   }
 }
 
@@ -126,21 +131,44 @@ async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
   }
 }
 
-async function addFromYoutubeSearch(crawler, videosCollection, randomQueryString) {
-    console.log('Searching YouTube for:', randomQueryString);
-
-    try {
-      const videoList = await searchYoutube(randomQueryString);
-      for (let i = 0; i < videoList.length; i++) {
-        const videoId = videoList[i];
-        if (videoId) {
-          crawlYTVideo(crawler, videosCollection, videoId);
+async function crawlSuggestions(query) {
+  console.log('Crawling suggestions', query)
+  try {
+    const suggestions = await getQuerySuggestions(query);
+    if (suggestions.length > 0) {
+      for (let i = 0; i < suggestions.length; i++) {
+        if (suggestedQueries.indexOf(suggestions[i]) === -1) {
+          suggestedQueries.push(suggestions[i]);
         }
       }
-      console.log('Added', videoList.length, 'videos with query', randomQueryString);
-    } catch (e) {
-      console.error('Unable to crawl random search:', e.message)
     }
+  } catch (e) {
+    console.error('Unable to get suggestions:', e.message)
+  }
+}
+
+// Searches a query string on youtube and adds to crawler
+async function addFromYoutubeSearch(crawler, videosCollection, randomQueryString, highPriority, hasSuggestedQuery) {
+  console.log('Searching YouTube for:', randomQueryString);
+
+  // Try get query suggestions for extra search queries
+  if (!hasSuggestedQuery) {
+    crawlSuggestions(randomQueryString);
+  }
+
+  // Search youtube for this query string
+  try {
+    const videoList = await searchYoutube(randomQueryString);
+    for (let i = 0; i < videoList.length; i++) {
+      const videoId = videoList[i];
+      if (videoId) {
+        crawlYTVideo(crawler, videosCollection, videoId, highPriority);
+      }
+    }
+    console.log('Added', videoList.length, 'videos with query', randomQueryString);
+  } catch (e) {
+    console.error('Unable to crawl random search:', e.message)
+  }
 }
 
 // Gets a random word from the dictionary and searches it with the
@@ -160,8 +188,11 @@ async function crawlRandomYTSearch(crawler, videosCollection) {
 
   // If que is growing too fast, dont perform more random searches
   if (!skipAddingNew) {
-    const randomQueryString = wordsList[crypto.randomInt(0, wordsListCount)];
-    await addFromYoutubeSearch(crawler, videosCollection, randomQueryString);
+    const hasSuggestedQuery = suggestedQueries.length > 0;
+    const randomQueryString = hasSuggestedQuery ?
+      suggestedQueries.pop() : // Get suggested query
+      wordsList[crypto.randomInt(0, wordsListCount)]; // Get random word
+    await addFromYoutubeSearch(crawler, videosCollection, randomQueryString, undefined, hasSuggestedQuery);
   } else {
     console.log('Queue size too large, skipping random video search');
   }
@@ -345,7 +376,7 @@ async function crawlQueries(crawler, videosCollection, queriesCollection) {
   // Fire this method again in a little bit to check for more queries
   setTimeout(() => {
     crawlQueries(crawler, videosCollection, queriesCollection);
-  }, youtubeSearchTimeout() * 2);
+  }, 1000);
 
   // Should we skip searches to let the que process?
   if (!skipAddingNew) {
@@ -353,7 +384,7 @@ async function crawlQueries(crawler, videosCollection, queriesCollection) {
     const uncrawledQuery = (await queriesCollection.find({ crawlDate: { $exists: false } }).limit(1).toArray())[0];
     if (uncrawledQuery) {
       queriesCollection.updateOne({ _id: uncrawledQuery._id }, { $set: { crawlDate: new Date() } });
-      await addFromYoutubeSearch(crawler, videosCollection, uncrawledQuery.query);
+      await addFromYoutubeSearch(crawler, videosCollection, uncrawledQuery.query, 0);
     }
   }
 }
@@ -435,7 +466,7 @@ async function main() {
     if (!process.env.DISABLE_YT_SEARCH) {
       setTimeout(() => {
         crawlRandomYTSearch(crawler, videosCollection);
-      }, clusterInstanceId * 3000);
+      }, clusterInstanceId * 1500);
     }
   }
 

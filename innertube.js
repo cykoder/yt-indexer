@@ -1,5 +1,7 @@
 import axios from 'axios';
 
+const apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'; // TODO: fetch api key from youtube.com source code, extract "innertubeApiKey":"
+
 const baseParams = {
   "context": {
     "client": {
@@ -44,7 +46,11 @@ const baseParams = {
   },
 };
 
-const apiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'; // TODO: fetch api key from youtube.com source code, extract "innertubeApiKey":"
+export async function getQuerySuggestions(query) {
+  const searchResults = await axios.get(`https://suggestqueries-clients6.youtube.com/complete/search?client=youtube&hl=en-gb&gl=nl&gs_rn=64&gs_ri=youtube&ds=yt&cp=5&gs_id=k&q=${query}&xhr=t&xssi=t`);
+  const jsonResults = JSON.parse(searchResults.data.substr(4));
+  return jsonResults.length > 1 ? jsonResults[1].map(r => r[0]) : [];
+}
 
 export async function loadContinuimVideos(query, continuation) {
   const continueData = await axios.post('https://www.youtube.com/youtubei/v1/search?key=' + apiKey, {
@@ -60,7 +66,7 @@ export async function loadContinuimVideos(query, continuation) {
   return continuedVideoList;
 }
 
-export default async function searchYoutube(query) {
+export async function searchYoutube(query) { // TODO: support sorting by filters
   const { data } = await axios.post('https://www.youtube.com/youtubei/v1/search?key=' + apiKey, {
     ...baseParams,
     query,
