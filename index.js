@@ -69,12 +69,16 @@ function randomVideoId() {
 }
 
 // Puts a uri into crawl que and cache
-function crawlURI(crawler, uri, priority = 5) {
+function crawlURI(crawler, uri, priority = 5, requestOptions = {}) {
   if (crawledURIs.indexOf(uri) === -1) {
     crawledURIs.push(uri);
 
     if (!process.env.DISABLE_METADATA_GATHER) {
-      crawler.queue(uri, { priority });
+      crawler.queue(uri, {
+        priority,
+        ...requestOptions,
+        headers: generateRandomHeaders(null, 'www.youtube.com'),
+      });
     }
   }
 }
@@ -85,6 +89,55 @@ function buildVideoUri(videoId) {
 
 function cleanYTUri(uri) {
   return uri.replace('https://www.youtube.com/oembed?url=', '').replace('&format=json', '');
+}
+
+function generateRandomHeaders(userAgent, origin = '') {
+  return {
+    'content-type': 'application/x-www-form-urlencoded',
+    'user-agent': userAgent || randomUseragent.getRandom(),
+    'authority': origin,
+    'cache-control': 'max-age=0',
+    'origin': `https://${origin}`,
+    'upgrade-insecure-requests': '1',
+    'dnt': '1',
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+    'sec-fetch-site': 'same-origin',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-user': '?1',
+    'sec-fetch-dest': 'document',
+    'referer': `https://${origin}/`,
+    'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+    'sec-gpc': '1',
+  };
+}
+
+// This method fires every so often to gather full video information from youtube for unknown videos
+// since the rate limits kick in often for non-oembed urls, we have to stagger full info requests
+async function gatherVideoDetails(crawler, videosCollection) {
+  // Crawl again later
+  const videoCount = 4;
+  setTimeout(() => {
+    gatherVideoDetails(crawler, videosCollection);
+  }, videoCount * 2000);
+
+  console.log('Gathering video details for unknown titles/descriptions...');
+  const unknownVideos = await videosCollection.find({
+    $and: [{
+      $or: [
+        { title: null },
+        { title: '' },
+      ]
+    }, {
+      $or: [
+        { description: null },
+        { description: '' },
+      ]
+    }]
+  }).limit(videoCount).toArray();
+
+  unknownVideos.forEach((video, i) => crawlURI(crawler, video.uri, 0, {
+    timeout: i * 1000,
+  }));
 }
 
 // Takes a video ID (or generates a random one) and creates an oembed URI that we can use
@@ -102,7 +155,7 @@ async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
 
   // We use oembed here to check if a YouTube video is valid, and if so get some basic info
   const videoUri = buildVideoUri(id || randomVideoId());
-  const url = process.env.USE_OEMBED ? `https://www.youtube.com/oembed?url=${videoUri}&format=json` : videoUri;
+  const url =  `https://www.youtube.com/oembed?url=${videoUri}&format=json`;
   if (id) { // Insert known ID with a high priority (1) to the crawler
     if (crawledURIs.indexOf(url) !== -1) { // Early out if already crawled/crawling
       return;
@@ -214,28 +267,11 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
   let userAgent;
   let isRateLimited = false;
   try {
-    userAgent = nextRequest.userAgent || randomUseragent.getRandom();
-    console.log('Searching DuckDuckGo for:', nextRequest.q, nextRequest.s, userAgent)
+    console.log('Searching DuckDuckGo for:', nextRequest.q, nextRequest.s)
     data = (await axios({
       method: 'POST',
       url: 'https://html.duckduckgo.com/html/',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'user-agent': userAgent,
-        'authority': 'html.duckduckgo.com',
-        'cache-control': 'max-age=0',
-        'origin': 'https://html.duckduckgo.com',
-        'upgrade-insecure-requests': '1',
-        'dnt': '1',
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-        'sec-fetch-site': 'same-origin',
-        'sec-fetch-mode': 'navigate',
-        'sec-fetch-user': '?1',
-        'sec-fetch-dest': 'document',
-        'referer': 'https://html.duckduckgo.com/',
-        'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
-        'sec-gpc': '1',
-      },
+      headers: generateRandomHeaders(nextRequest.userAgent, 'html.duckduckgo.com'),
       data: qs.stringify(nextRequest),
     })).data;
   } catch (e) {
@@ -402,8 +438,10 @@ async function onCrawled(error, res, done, opts) {
         urlCounter = 0;
         crawledURIs = [];
       }
-    } else {
-      console.error('Unknown statuscode:', res.statusCode)
+    } else if (res.statusCode === 429) {
+      console.error('Rate limited:', uri);
+    } else if (res.statusCode !== 404) {
+      console.error('Unknown statuscode:', uri, res.statusCode, res.body)
       failedCounter++;
     }
   } catch (e) {
@@ -518,6 +556,10 @@ async function main() {
 
   if (!process.env.DISABLE_MANUALQUERY) {
     crawlQueries(crawler, videosCollection, queriesCollection);
+  }
+
+  if (!process.env.DISABLE_UNNOWN_GATHER) {
+    gatherVideoDetails(crawler, videosCollection);
   }
 }
 
