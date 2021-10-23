@@ -27,6 +27,7 @@ const wordsListCount = wordsList.length;
 const YOUTUBE_TIMEOUT_MIN = parseInt(process.env.YOUTUBE_TIMEOUT_MIN || 500, 10);
 const youtubeSearchTimeout = () => Math.floor(YOUTUBE_TIMEOUT_MIN + Math.random() * YOUTUBE_TIMEOUT_MIN);
 const duckSearchTimeout = (rateLimited) => Math.floor(20000 + Math.random() * 30000) + (rateLimited ? 60000 : 0);
+const FULL_INFO_GATHER_TIMEOUT = process.env.FULL_INFO_GATHER_TIMEOUT || 250 + (500 * Math.random() * clusterInstanceId);
 
 // Connection URL
 const url = process.env.MONGODB_URI;
@@ -118,7 +119,7 @@ async function gatherVideoDetails(crawler, videosCollection) {
   const videoCount = 4;
   setTimeout(() => {
     gatherVideoDetails(crawler, videosCollection);
-  }, videoCount * 2000);
+  }, videoCount * 2 * FULL_INFO_GATHER_TIMEOUT);
 
   console.log('Gathering video details for unknown titles/descriptions...');
   const unknownVideos = await videosCollection.find({
@@ -136,7 +137,7 @@ async function gatherVideoDetails(crawler, videosCollection) {
   }).limit(videoCount).toArray();
 
   unknownVideos.forEach((video, i) => crawlURI(crawler, video.uri, 0, {
-    timeout: i * 1000,
+    timeout: i * FULL_INFO_GATHER_TIMEOUT,
   }));
 }
 
@@ -347,13 +348,15 @@ async function insertVideo(videosCollection, data, crawler) {
         .then(feedResponse => {
           const { feed } = xmlParser.parse(feedResponse.data, {});
           const videoCount = feed.entry.length;
-          for (let i = 0; i < videoCount; i++) {
-            const feedItem = feed.entry[i];
-            if (feedItem && feedItem['yt:videoId']) {
-              crawlYTVideo(crawler, videosCollection, feedItem['yt:videoId']);
+          if (videoCount !== undefined && videoCount > 0) {
+            for (let i = 0; i < videoCount; i++) {
+              const feedItem = feed.entry[i];
+              if (feedItem && feedItem['yt:videoId']) {
+                crawlYTVideo(crawler, videosCollection, feedItem['yt:videoId']);
+              }
             }
+            console.log('Added', videoCount, 'channel videos for channel:', channelId)
           }
-          console.log('Added', videoCount, 'channel videos for channel:', channelId)
         });
     }
   }
@@ -496,10 +499,12 @@ async function main() {
 
   // Crawler object def
   console.log('Creating crawler object...');
+  const maxConnections = process.env.MAX_CONNECTIONS ? parseInt(process.env.MAX_CONNECTIONS, 10) : 1;
+  const rateLimit = process.env.RATE_LIMIT ? parseInt(process.env.RATE_LIMIT, 10) : 0;
   const crawler = new Crawler({
-    maxConnections: process.env.MAX_CONNECTIONS || 8,
-    rateLimit: process.env.RATE_LIMIT || 50,
-    timeout: 7500,
+    maxConnections,
+    rateLimit,
+    timeout: 5000,
     callback: (error, res, done) => {
       return onCrawled(error, res, done, {
         videosCollection,
