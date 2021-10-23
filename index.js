@@ -403,6 +403,7 @@ async function onCrawled(error, res, done, opts) {
         crawledURIs = [];
       }
     } else {
+      console.error('Unknown statuscode:', res.statusCode)
       failedCounter++;
     }
   } catch (e) {
