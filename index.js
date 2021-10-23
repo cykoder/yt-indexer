@@ -102,7 +102,7 @@ async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
 
   // We use oembed here to check if a YouTube video is valid, and if so get some basic info
   const videoUri = buildVideoUri(id || randomVideoId());
-  const url = `https://www.youtube.com/oembed?url=${videoUri}&format=json`;
+  const url = process.env.USE_OEMBED ? `https://www.youtube.com/oembed?url=${videoUri}&format=json` : videoUri;
   if (id) { // Insert known ID with a high priority (1) to the crawler
     if (crawledURIs.indexOf(url) !== -1) { // Early out if already crawled/crawling
       return;
@@ -285,19 +285,41 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
   }, duckSearchTimeout(isRateLimited));
 }
 
-async function insertVideo(videosCollection, { uri, title = '', authorName = '', authorUrl = '', description = '' }) {
+async function insertVideo(videosCollection, data, crawler) {
+  const { uri, authorUrl } = data;
+
   try {
     await videosCollection.updateOne({ uri }, {
       $set: {
+        ...data,
         uri,
-        title,
-        authorName,
-        authorUrl,
-        description,
       },
     }, { upsert: true });
   } catch (e) {
     console.error(e);
+  }
+
+
+  // Get RSS feed of channel and crawl their videos
+  const ytChannelStr = 'https://www.youtube.com/channel/';
+  if (crawler && authorUrl && !skipAddingNew && authorUrl.substr(0, ytChannelStr.length) === ytChannelStr) {
+    const channelId = authorUrl.substr(ytChannelStr.length);
+    const rssUri = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+    if (crawledURIs.indexOf(rssUri) === -1) {
+      crawledURIs.push(rssUri);
+      axios.get(rssUri)
+        .then(feedResponse => {
+          const { feed } = xmlParser.parse(feedResponse.data, {});
+          const videoCount = feed.entry.length;
+          for (let i = 0; i < videoCount; i++) {
+            const feedItem = feed.entry[i];
+            if (feedItem && feedItem['yt:videoId']) {
+              crawlYTVideo(crawler, videosCollection, feedItem['yt:videoId']);
+            }
+          }
+          console.log('Added', videoCount, 'channel videos for channel:', channelId)
+        });
+    }
   }
 }
 
@@ -322,37 +344,56 @@ async function onCrawled(error, res, done, opts) {
       // console.log('\nCrawled unauthed URI:', uri);
       insertVideo(videosCollection, { uri: videoUri });
     } else if (res.statusCode === 200) {
-      const { title, author_name, author_url } = JSON.parse(res.body);
-      // console.log('\nIndexed URI:', videoUri);
+      // console.log('\nIndexing URI:', videoUri);
+      const isJSON = res.body.substr(0, 1) === '{';
+      if (isJSON) {
+        const { title, author_name, author_url } = JSON.parse(res.body);
+        insertVideo(videosCollection, {
+          uri: videoUri,
+          title,
+          authorName: author_name,
+          authorUrl: author_url,
+          description: '',
+        }, crawler);
+      } else {
+        const videoDetailsStr = `"microformat":`;
+        const videoDetailsIndex = res.body.indexOf(videoDetailsStr);
+        if (videoDetailsIndex !== -1) {
+          const tests = res.body.substr(videoDetailsIndex + videoDetailsStr.length);
+          const endIndex = tests.indexOf(`,"trackingParams"`);
+          if (endIndex === -1) {
+            console.error('Unable to parse YT JSON in step 2');
+          } else {
+            let microformatStr = tests.substr(0, endIndex);
+            const cardsIndex = microformatStr.indexOf(`,"cards"`);
+            if (cardsIndex !== -1) { // Some data has extra property of cards, filter it out
+              microformatStr = microformatStr.substr(0, cardsIndex);
+            }
 
-      // Insert video in the background
-      insertVideo(videosCollection, {
-        uri: videoUri,
-        title,
-        authorName: author_name,
-        authorUrl: author_url,
-        description: '',
-      });
+            const {
+              title,
+              description,
+              lengthSeconds,
+              ownerProfileUrl,
+              externalChannelId,
+              viewCount,
+              category,
+              uploadDate,
+              ownerChannelName
+            } = JSON.parse(microformatStr).playerMicroformatRenderer;
 
-      // Get RSS feed of channel and crawl their videos
-      const ytChannelStr = 'https://www.youtube.com/channel/';
-      if (!skipAddingNew && author_url.substr(0, ytChannelStr.length) === ytChannelStr) {
-        const channelId = author_url.substr(ytChannelStr.length);
-        const rssUri = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-        if (crawledURIs.indexOf(rssUri) === -1) {
-          crawledURIs.push(rssUri);
-          axios.get(rssUri)
-            .then(feedResponse => {
-              const { feed } = xmlParser.parse(feedResponse.data, {});
-              const videoCount = feed.entry.length;
-              for (let i = 0; i < videoCount; i++) {
-                const feedItem = feed.entry[i];
-                if (feedItem && feedItem['yt:videoId']) {
-                  crawlYTVideo(crawler, videosCollection, feedItem['yt:videoId']);
-                }
-              }
-              console.log('Added', videoCount, 'channel videos for channel:', channelId)
-            });
+            insertVideo(videosCollection, {
+              uri: videoUri,
+              title: title && title.simpleText,
+              authorName: ownerChannelName,
+              authorUrl: externalChannelId ? `https://www.youtube.com/channel/${externalChannelId}` : ownerProfileUrl,
+              description: description && description.simpleText,
+              lengthSeconds: parseInt(lengthSeconds, 10),
+              viewCount,
+              category,
+              uploadDate,
+            }, crawler);
+          }
         }
       }
 
