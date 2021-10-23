@@ -139,6 +139,7 @@ async function gatherVideoDetails(crawler, videosCollection) {
   unknownVideos.forEach((video, i) => crawlURI(crawler, video.uri, 0, {
     timeout: i * FULL_INFO_GATHER_TIMEOUT,
   }));
+  console.log('Added', unknownVideos.length, 'full meta urls to crawl');
 }
 
 // Takes a video ID (or generates a random one) and creates an oembed URI that we can use
@@ -339,7 +340,7 @@ async function insertVideo(videosCollection, data, crawler) {
 
   // Get RSS feed of channel and crawl their videos
   const ytChannelStr = 'https://www.youtube.com/channel/';
-  if (crawler && authorUrl && !skipAddingNew && authorUrl.substr(0, ytChannelStr.length) === ytChannelStr) {
+  if (!process.env.DISABLE_CHANNEL_CRAWL && crawler && authorUrl && !skipAddingNew && authorUrl.substr(0, ytChannelStr.length) === ytChannelStr) {
     const channelId = authorUrl.substr(ytChannelStr.length);
     const rssUri = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
     if (crawledURIs.indexOf(rssUri) === -1) {
@@ -538,30 +539,30 @@ async function main() {
 
   // Do some crawling
   console.log('Starting crawling...');
-  if (!process.env.DISABLE_SEARCH) {
-    // Launch duck searches, for clusters we stagger the start so that
-    // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
-    if (!process.env.DISABLE_DUCK_SEARCH) {
-      setTimeout(() => {
-        crawlRandomDuckDuckGoSearch(crawler, videosCollection);
-      }, clusterInstanceId * 10000); // Every 10 seconds a cluster instance will fire, immediate for ID 0
-    }
-
-    // Launch YT searches
-    if (!process.env.DISABLE_YT_SEARCH) {
-      setTimeout(() => {
-        crawlRandomYTSearch(crawler, videosCollection);
-      }, clusterInstanceId * 1500);
-    }
-  }
-
-  if (!process.env.DISABLE_RANDOMHASH) {
-    crawlYTVideo(crawler, videosCollection);
-  }
-
-  if (!process.env.DISABLE_MANUALQUERY) {
-    crawlQueries(crawler, videosCollection, queriesCollection);
-  }
+  // if (!process.env.DISABLE_SEARCH) {
+  //   // Launch duck searches, for clusters we stagger the start so that
+  //   // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
+  //   if (!process.env.DISABLE_DUCK_SEARCH) {
+  //     setTimeout(() => {
+  //       crawlRandomDuckDuckGoSearch(crawler, videosCollection);
+  //     }, clusterInstanceId * 10000); // Every 10 seconds a cluster instance will fire, immediate for ID 0
+  //   }
+  //
+  //   // Launch YT searches
+  //   if (!process.env.DISABLE_YT_SEARCH) {
+  //     setTimeout(() => {
+  //       crawlRandomYTSearch(crawler, videosCollection);
+  //     }, clusterInstanceId * 1500);
+  //   }
+  // }
+  //
+  // if (!process.env.DISABLE_RANDOMHASH) {
+  //   crawlYTVideo(crawler, videosCollection);
+  // }
+  //
+  // if (!process.env.DISABLE_MANUALQUERY) {
+  //   crawlQueries(crawler, videosCollection, queriesCollection);
+  // }
 
   if (!process.env.DISABLE_UNNOWN_GATHER) {
     gatherVideoDetails(crawler, videosCollection);
