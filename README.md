@@ -16,6 +16,7 @@ It can be configured with the following environment variables, typically through
 | DISABLE_SEARCH | false     | Disables all search (DISABLE_YT_SEARCH and DISABLE_DUCK_SEARCH)       |
 | DISABLE_METADATA_GATHER | false     | Disables gathering video metadata, will only insert uris       |
 | DISABLE_CHANNEL_CRAWL | false     | Disables crawling YT channels       |
+| DISABLE_SUGGESTIONS | false     | Disables crawling query suggestions      |
 | YOUTUBE_TIMEOUT_MIN | false     | How long between youtube searches       |
 | FULL_INFO_GATHER_TIMEOUT | false     | How long between doing full YT data gathers       |
 | BIND_IP | false     | Bind IP for JSON stats       |

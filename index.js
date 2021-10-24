@@ -217,12 +217,15 @@ async function addFromYoutubeSearch(crawler, videosCollection, randomQueryString
   console.log('Searching YouTube for:', randomQueryString);
 
   // Try get query suggestions for extra search queries
-  if (!hasSuggestedQuery && suggestedQueries.length === 0) {
+  if (!process.env.DISABLE_SUGGESTIONS && !hasSuggestedQuery && suggestedQueries.length === 0) {
     crawlSuggestions(randomQueryString);
   }
 
   // Ensure we dont crawl again
   ytQueryCache.push(randomQueryString);
+  if (ytQueryCache.length > 20000) {
+    ytQueryCache.length = 0;
+  }
 
   // Search youtube for this query string
   try {
