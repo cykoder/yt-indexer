@@ -189,11 +189,12 @@ async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
   }
 }
 
+// Gets suggestions and adds them to the suggested query list
 async function crawlSuggestions(query) {
   console.log('Crawling suggestions', query)
   try {
     const suggestions = await getQuerySuggestions(query);
-    if (suggestions.length > 0) {
+    if (suggestions.length > 0 && suggestedQueries.length === 0) {
       for (let i = 0; i < suggestions.length; i++) {
         if (suggestedQueries.indexOf(suggestions[i]) === -1) {
           suggestedQueries.push(suggestions[i]);
