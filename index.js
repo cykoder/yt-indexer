@@ -85,7 +85,11 @@ function crawlURI(crawler, uri, priority = 5, requestOptions = {}) {
         headers: generateRandomHeaders(null, 'www.youtube.com'),
       });
     }
+
+    return true;
   }
+
+  return false;
 }
 
 function buildVideoUri(videoId) {
@@ -140,15 +144,22 @@ async function gatherVideoDetails(crawler, videosCollection) {
     }]
   }).limit(videoCount).toArray();
 
-  unknownVideos.forEach((video, i) => crawlURI(crawler, video.uri, 0, {
-    timeout: i * FULL_INFO_GATHER_TIMEOUT,
-  }));
-  console.log('Added', unknownVideos.length, 'full meta urls to crawl');
+  let addedCount = 0;
+  unknownVideos.forEach((video, i) => {
+    if (crawlURI(crawler, video.uri, 0, {
+      timeout: i * FULL_INFO_GATHER_TIMEOUT,
+    })) {
+      addedCount++;
+    }
+  });
+  console.log('Added', addedCount, 'full meta urls to crawl');
 }
 
 // Takes a video ID (or generates a random one) and creates an oembed URI that we can use
 // to gather public metadata of the video. Then it will insert the URI into the crawler que
-async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
+function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
+  let didCrawl = false;
+
   // If queue is already processing quite a few requests then dont generate
   // random videos URIs. Set a timeout to check again later
   if (!id && (skipAddingNew || crawler.queueSize > 64)) {
@@ -169,16 +180,14 @@ async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
 
     // Check video URI doesnt exist in database with information before adding to crawler
     const videoUri = cleanYTUri(url);
-    const foundVideo = await videosCollection.count({ uri: videoUri, title: {'$exists': true, '$ne' : ''}});
-    if (foundVideo === 0) {
-      // Insert video uri incase of program exit so that valid URL is saved somewhere
-      insertVideo(videosCollection, { uri: videoUri });
-      crawlURI(crawler, url, highPriority);
-    }
+
+    // Insert video uri incase of program exit so that valid URL is saved somewhere
+    insertVideo(videosCollection, { uri: videoUri });
+    didCrawl = crawlURI(crawler, url, highPriority);
   } else {
     // Insert with random priority so that we can still process
     // some random URIs even if random search is producing alot of results
-    crawlURI(crawler, url, crypto.randomInt(highPriority, 3));
+    didCrawl = crawlURI(crawler, url, crypto.randomInt(highPriority, 3));
   }
 
   // ID wasnt provided, assuming wanting to continue the random
@@ -188,6 +197,8 @@ async function crawlYTVideo(crawler, videosCollection, id, highPriority = 1) {
       crawlYTVideo(crawler, videosCollection);
     }, 50);
   }
+
+  return didCrawl;
 }
 
 // Gets suggestions and adds them to the suggested query list
@@ -229,14 +240,17 @@ async function addFromYoutubeSearch(crawler, videosCollection, randomQueryString
 
   // Search youtube for this query string
   try {
+    let addedCount = 0;
     const videoList = await searchYoutube(randomQueryString);
     for (let i = 0; i < videoList.length; i++) {
       const videoId = videoList[i];
       if (videoId) {
-        crawlYTVideo(crawler, videosCollection, videoId, highPriority);
+        if (crawlYTVideo(crawler, videosCollection, videoId, highPriority)) {
+          addedCount++;
+        }
       }
     }
-    console.log('Added', videoList.length, 'videos with query', randomQueryString);
+    console.log('Added', addedCount, 'videos with query', randomQueryString);
   } catch (e) {
     console.error('Unable to crawl random search:', e.message)
   }
@@ -244,7 +258,7 @@ async function addFromYoutubeSearch(crawler, videosCollection, randomQueryString
 
 // Gets a random word from the dictionary and searches it with the
 // innertube API. It will add the video uris to the crawler que at high priority
-async function crawlRandomYTSearch(crawler, videosCollection) {
+async function crawlRandomYTSearch(crawler, videosCollection, queriesCollection) {
   // Set skip adding new if que is too large until its nearly all been processed
   if (!skipAddingNew && crawler.queueSize > 256) {
     skipAddingNew = true;
@@ -254,18 +268,23 @@ async function crawlRandomYTSearch(crawler, videosCollection) {
 
   // Set to fire this method again soon
   setTimeout(() => {
-    crawlRandomYTSearch(crawler, videosCollection);
+    crawlRandomYTSearch(crawler, videosCollection, queriesCollection);
   }, youtubeSearchTimeout());
 
   // If que is growing too fast, dont perform more random searches
   if (!skipAddingNew) {
+    const manualQuery = await getManualQuery(queriesCollection);
     const hasSuggestedQuery = suggestedQueries.length > 0;
-    const randomQueryString = hasSuggestedQuery ?
-      suggestedQueries.pop() : // Get suggested query
-      wordsList[crypto.randomInt(0, wordsListCount)]; // Get random word
-    await addFromYoutubeSearch(crawler, videosCollection, randomQueryString, undefined, hasSuggestedQuery);
+    const queryString = manualQuery ?
+      manualQuery :
+      (
+        hasSuggestedQuery ?
+          suggestedQueries.pop() : // Get suggested query
+          wordsList[crypto.randomInt(0, wordsListCount)] // Get random word
+      );
+    await addFromYoutubeSearch(crawler, videosCollection, queryString, undefined, hasSuggestedQuery);
   } else {
-    console.log('Queue size too large, skipping random video search');
+    console.log('Queue size too large, skipping youtube video search');
   }
 }
 
@@ -325,8 +344,13 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
       .filter((url, index, self) => self.indexOf(url) === index);
 
       // Consider these URLS as highest priority (0)
-      videoIds.forEach(videoId => crawlYTVideo(crawler, videosCollection, videoId, 0));
-      console.log('Added', videoIds.length, 'duck videos');
+      let addedCount = 0;
+      videoIds.forEach(videoId => {
+        if (crawlYTVideo(crawler, videosCollection, videoId, 0)) {
+          addedCount++;
+        }
+      });
+      console.log('Added', addedCount, 'duck videos');
     } else {
       console.error('Unable to parse duck YT matches, assuming no more results. Switching query...');
       nextRequestData = undefined;
@@ -398,13 +422,16 @@ async function insertVideo(videosCollection, data, crawler) {
           const { feed } = xmlParser.parse(feedResponse.data, {});
           const videoCount = feed.entry.length;
           if (videoCount !== undefined && videoCount > 0) {
+            let addedCount = 0;
             for (let i = 0; i < videoCount; i++) {
               const feedItem = feed.entry[i];
               if (feedItem && feedItem['yt:videoId']) {
-                crawlYTVideo(crawler, videosCollection, feedItem['yt:videoId']);
+                if (crawlYTVideo(crawler, videosCollection, feedItem['yt:videoId'])) {
+                  addedCount++;
+                }
               }
             }
-            console.log('Added', videoCount, 'channel videos for channel:', channelId)
+            console.log('Added', addedCount, 'channel videos for channel:', channelId)
           }
         });
     }
@@ -506,20 +533,16 @@ async function onCrawled(error, res, done, opts) {
 }
 
 // Crawls user inputted queries from the database
-async function crawlQueries(crawler, videosCollection, queriesCollection) {
-  // Fire this method again in a little bit to check for more queries
-  setTimeout(() => {
-    crawlQueries(crawler, videosCollection, queriesCollection);
-  }, 1000);
+async function getManualQuery(queriesCollection) {
+  if (process.env.DISABLE_MANUALQUERY) {
+    return;
+  }
 
-  // Should we skip searches to let the que process?
-  if (!skipAddingNew) {
-    // Find a query that has not been crawled yet, set its status as crawled and then search youtube
-    const uncrawledQuery = (await queriesCollection.find({ crawlDate: { $exists: false } }).limit(1).toArray())[0];
-    if (uncrawledQuery) {
-      queriesCollection.updateOne({ _id: uncrawledQuery._id }, { $set: { crawlDate: new Date() } });
-      await addFromYoutubeSearch(crawler, videosCollection, uncrawledQuery.query, 0);
-    }
+  // Find a query that has not been crawled yet, set its status as crawled and then search youtube
+  const uncrawledQuery = (await queriesCollection.find({ crawlDate: { $exists: false } }).limit(1).toArray())[0];
+  if (uncrawledQuery) {
+    queriesCollection.updateOne({ _id: uncrawledQuery._id }, { $set: { crawlDate: new Date() } });
+    return uncrawledQuery.query;
   }
 }
 
@@ -564,7 +587,7 @@ async function main() {
         crawler,
       });
     },
-    retries: 0,
+    retries: 1,
     jQuery: false,
   });
 
@@ -654,19 +677,13 @@ async function main() {
     // Launch YT searches
     if (!process.env.DISABLE_YT_SEARCH) {
       setTimeout(() => {
-        crawlRandomYTSearch(crawler, videosCollection);
+        crawlRandomYTSearch(crawler, videosCollection, queriesCollection);
       }, clusterInstanceId * 1500);
     }
   }
 
   if (!process.env.DISABLE_RANDOMHASH) {
     crawlYTVideo(crawler, videosCollection);
-  }
-
-  if (!process.env.DISABLE_MANUALQUERY) {
-    setTimeout(() => {
-      crawlQueries(crawler, videosCollection, queriesCollection);
-    }, clusterInstanceId * 1000);
   }
 
   if (!process.env.DISABLE_UNNOWN_GATHER) {
