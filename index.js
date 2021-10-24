@@ -412,8 +412,6 @@ async function onCrawled(error, res, done, opts) {
       return;
     }
 
-    console.log('onCrawled', uri)
-
     if (res.statusCode === 401 || res.body === 'Unauthorized') {
       // Unauthorized means that the video exists but is flagged as not embeddable
       // only way to get info would be through the youtube API - which we can do later
@@ -577,7 +575,7 @@ async function main() {
     const timeStart = process.hrtime();
 
     // Perform aggregation search
-      var startdate = new Date();
+    const startdate = new Date();
     const aggregation = await videosCollection.aggregate([
         {
           $match: findTerm
@@ -611,7 +609,7 @@ async function main() {
       },
     }, { upsert: true });
 
-  var elapsedTime = new Date() - startdate
+    const elapsedTime = new Date() - startdate
 
     reply.send({
       aggregation,
@@ -631,33 +629,37 @@ async function main() {
 
   // Do some crawling
   console.log('Starting crawling...');
-  // if (!process.env.DISABLE_SEARCH) {
-  //   // Launch duck searches, for clusters we stagger the start so that
-  //   // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
-  //   if (!process.env.DISABLE_DUCK_SEARCH) {
-  //     setTimeout(() => {
-  //       crawlRandomDuckDuckGoSearch(crawler, videosCollection);
-  //     }, clusterInstanceId * 10000); // Every 10 seconds a cluster instance will fire, immediate for ID 0
-  //   }
-  //
-  //   // Launch YT searches
-  //   if (!process.env.DISABLE_YT_SEARCH) {
-  //     setTimeout(() => {
-  //       crawlRandomYTSearch(crawler, videosCollection);
-  //     }, clusterInstanceId * 1500);
-  //   }
-  // }
-  //
-  // if (!process.env.DISABLE_RANDOMHASH) {
-  //   crawlYTVideo(crawler, videosCollection);
-  // }
-  //
+  if (!process.env.DISABLE_SEARCH) {
+    // Launch duck searches, for clusters we stagger the start so that
+    // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
+    if (!process.env.DISABLE_DUCK_SEARCH) {
+      setTimeout(() => {
+        crawlRandomDuckDuckGoSearch(crawler, videosCollection);
+      }, clusterInstanceId * 10000); // Every 10 seconds a cluster instance will fire, immediate for ID 0
+    }
+
+    // Launch YT searches
+    if (!process.env.DISABLE_YT_SEARCH) {
+      setTimeout(() => {
+        crawlRandomYTSearch(crawler, videosCollection);
+      }, clusterInstanceId * 1500);
+    }
+  }
+
+  if (!process.env.DISABLE_RANDOMHASH) {
+    crawlYTVideo(crawler, videosCollection);
+  }
+
   if (!process.env.DISABLE_MANUALQUERY) {
-    crawlQueries(crawler, videosCollection, queriesCollection);
+    setTimeout(() => {
+      crawlQueries(crawler, videosCollection, queriesCollection);
+    }, clusterInstanceId * 1000);
   }
 
   if (!process.env.DISABLE_UNNOWN_GATHER) {
-    gatherVideoDetails(crawler, videosCollection);
+    setTimeout(() => {
+      gatherVideoDetails(crawler, videosCollection);
+    }, clusterInstanceId * 1000);
   }
 }
 
