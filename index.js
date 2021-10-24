@@ -31,7 +31,10 @@ const FULL_INFO_GATHER_TIMEOUT = process.env.FULL_INFO_GATHER_TIMEOUT || 250 + (
 
 // Connection URL
 const url = process.env.MONGODB_URI;
-const client = new MongoClient(url);
+const client = new MongoClient(url, {
+  maxPoolSize: 3,
+  minPoolSize: 1,
+});
 
 const dbName = 'yt-indexer'; // Database Name
 const urlCountMax = 50000; // Max urls to store until cache reset
@@ -539,30 +542,30 @@ async function main() {
 
   // Do some crawling
   console.log('Starting crawling...');
-  // if (!process.env.DISABLE_SEARCH) {
-  //   // Launch duck searches, for clusters we stagger the start so that
-  //   // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
-  //   if (!process.env.DISABLE_DUCK_SEARCH) {
-  //     setTimeout(() => {
-  //       crawlRandomDuckDuckGoSearch(crawler, videosCollection);
-  //     }, clusterInstanceId * 10000); // Every 10 seconds a cluster instance will fire, immediate for ID 0
-  //   }
-  //
-  //   // Launch YT searches
-  //   if (!process.env.DISABLE_YT_SEARCH) {
-  //     setTimeout(() => {
-  //       crawlRandomYTSearch(crawler, videosCollection);
-  //     }, clusterInstanceId * 1500);
-  //   }
-  // }
-  //
-  // if (!process.env.DISABLE_RANDOMHASH) {
-  //   crawlYTVideo(crawler, videosCollection);
-  // }
-  //
-  // if (!process.env.DISABLE_MANUALQUERY) {
-  //   crawlQueries(crawler, videosCollection, queriesCollection);
-  // }
+  if (!process.env.DISABLE_SEARCH) {
+    // Launch duck searches, for clusters we stagger the start so that
+    // cluster 0 is immediate, cluster 1 is 8 seconds later, cluster 2 is 16 seconds later, etc
+    if (!process.env.DISABLE_DUCK_SEARCH) {
+      setTimeout(() => {
+        crawlRandomDuckDuckGoSearch(crawler, videosCollection);
+      }, clusterInstanceId * 10000); // Every 10 seconds a cluster instance will fire, immediate for ID 0
+    }
+
+    // Launch YT searches
+    if (!process.env.DISABLE_YT_SEARCH) {
+      setTimeout(() => {
+        crawlRandomYTSearch(crawler, videosCollection);
+      }, clusterInstanceId * 1500);
+    }
+  }
+
+  if (!process.env.DISABLE_RANDOMHASH) {
+    crawlYTVideo(crawler, videosCollection);
+  }
+
+  if (!process.env.DISABLE_MANUALQUERY) {
+    crawlQueries(crawler, videosCollection, queriesCollection);
+  }
 
   if (!process.env.DISABLE_UNNOWN_GATHER) {
     gatherVideoDetails(crawler, videosCollection);
