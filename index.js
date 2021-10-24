@@ -50,6 +50,7 @@ let skipAddingNew = false;
 let failedCounter = 0;
 let urlCounter = 0;
 const suggestedQueries = [];
+const ytQueryCache = [];
 
 // Start web server for reporting
 const fastify = Fastify({
@@ -208,12 +209,20 @@ async function crawlSuggestions(query) {
 
 // Searches a query string on youtube and adds to crawler
 async function addFromYoutubeSearch(crawler, videosCollection, randomQueryString, highPriority, hasSuggestedQuery) {
+  // Already crawled this recently
+  if (ytQueryCache.indexOf(randomQueryString) !== -1) {
+    return;
+  }
+
   console.log('Searching YouTube for:', randomQueryString);
 
   // Try get query suggestions for extra search queries
   if (!hasSuggestedQuery && suggestedQueries.length === 0) {
     crawlSuggestions(randomQueryString);
   }
+
+  // Ensure we dont crawl again
+  ytQueryCache.push(randomQueryString);
 
   // Search youtube for this query string
   try {
