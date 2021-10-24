@@ -326,20 +326,52 @@ async function crawlRandomDuckDuckGoSearch(crawler, videosCollection, nextReques
   }, duckSearchTimeout(isRateLimited));
 }
 
-async function insertVideo(videosCollection, data, crawler) {
-  const { uri, authorUrl } = data;
+const englishPunctuationRegex = /[!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~]/g;
+import {nGram} from 'n-gram'
 
+function performLanguageFilter(str, maxWords = 16, maxNGrams = 8) {
+  const filteredStr = str.split(' ')
+    .filter(w => w.length > 2)
+    .slice(0, maxWords)
+    .map(w => w.trim().toLowerCase().replace(englishPunctuationRegex, ''))
+    .join(' ');
+
+  const ngrams = nGram(4)(filteredStr)
+    .map(w => w.trim().replace(' ', ''))
+    .filter(w => w.length > 2)
+    .slice(0, maxNGrams);
+
+  return [...filteredStr.split(' '), ...ngrams];
+}
+
+async function insertVideo(videosCollection, data, crawler) {
+  const { uri, authorUrl, title, description, authorName } = data;
+
+  // Perform language filtering on title, description and author
+  // to build a fuzzy words list based on ngrams and importance sampled
+  // words in each string. This is indexed as text in the DB for searches later
+  const titleWords = title ? performLanguageFilter(title, 4) : [];
+  const descriptionWords = description ? performLanguageFilter(description, 8) : [];
+  const authorWords = authorName ? performLanguageFilter(authorName, 3, 0) : [];
+  const fuzzyWords = [...authorWords, ...titleWords, ...descriptionWords].slice(0, 64).join(' ');
+  const dbData = {
+    ...data,
+    uri,
+  };
+
+  // Assign fuzzy words property if they exist
+  if (fuzzyWords.length > 0) {
+    dbData.fuzzyWords = fuzzyWords;
+  }
+
+  // Try insert the document
   try {
     await videosCollection.updateOne({ uri }, {
-      $set: {
-        ...data,
-        uri,
-      },
+      $set: dbData,
     }, { upsert: true });
   } catch (e) {
     console.error(e);
   }
-
 
   // Get RSS feed of channel and crawl their videos
   const ytChannelStr = 'https://www.youtube.com/channel/';
@@ -437,6 +469,8 @@ async function onCrawled(error, res, done, opts) {
               uploadDate,
             }, crawler);
           }
+        } else {
+          console.error('cant find microformat', uri)
         }
       }
 
@@ -486,20 +520,23 @@ async function main() {
   const videosCollection = db.collection('videos');
   const queriesCollection = db.collection('queries');
 
+  // Insert sample document
+  await insertVideo(videosCollection, {
+    uri: 'https://www.youtube.com/watch?v=C56YqrNFo5g',
+    title: 'Lil Peep Music Mix',
+    authorName: 'Lil Peep',
+    authorUrl: 'https://www.youtube.com/channel/UCB7PYANYP2HWq6sWxU8etCg',
+    description: 'Best English Songs Playlist Of Lil Peep 2021',
+  });
+
   // Ensure DB indices exist
   console.log('Creating indices on queries collection...');
   await queriesCollection.createIndex({ query: 1 }, { unique: true });
 
   console.log('Creating indices on videos collection...');
   await videosCollection.createIndex({ uri: 1 }, { unique: true });
-  await videosCollection.createIndex({
-    title: 'text',
-    authorUrl: 'text',
-    authorName: 'text',
-    description: 'text',
-  }, {
-    default_language: 'none',
-  });
+  await videosCollection.createIndex({ authorName: 'text' }, { default_language: 'none' });
+  await videosCollection.createIndex({ fuzzyWords: 'text' }, { default_language: 'none' });
 
   // Crawler object def
   console.log('Creating crawler object...');
@@ -519,7 +556,7 @@ async function main() {
     jQuery: false,
   });
 
-  // Base stats rout
+  // Base stats route
   console.log('Initializing fastify...');
   fastify.get('/', (request, reply) => {
     reply.send({
