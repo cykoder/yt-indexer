@@ -535,7 +535,6 @@ async function main() {
 
   console.log('Creating indices on videos collection...');
   await videosCollection.createIndex({ uri: 1 }, { unique: true });
-  await videosCollection.createIndex({ authorName: 'text' }, { default_language: 'none' });
   await videosCollection.createIndex({ fuzzyWords: 'text' }, { default_language: 'none' });
 
   // Crawler object def
@@ -565,6 +564,63 @@ async function main() {
       indexedCount: urlCounter,
       failed: failedCounter,
     });
+  });
+
+  // Query route
+  fastify.get('/query', async (request, reply) => {
+    console.log('got request')
+    const itemsPerPage = 10;
+    const page = 0;
+    const searchTerm = request.query.q || '';
+    const findTerm = { $text: { $search: searchTerm } };
+    const timeStart = process.hrtime();
+
+    // Perform a slow ass aggregation
+      console.log('do aggregation')
+      var startdate = new Date();
+    const aggregation = await videosCollection.aggregate([
+            {
+                "$match": findTerm
+            },
+            // {
+            //     "$addFields": {
+            //         "textScore": {"$meta": "textScore"}
+            //     }
+            // },
+            // { "$facet": {
+            //   "totalData": [
+            //     { "$skip": itemsPerPage * page },
+            //     { "$limit": itemsPerPage }
+            //   ],
+            //   "totalCount": [
+            //     { "$count": "count" }
+            //   ]
+            // }},
+            // {
+            //   "$sort": { score: { $meta: "textScore" } },
+            // },
+    ]).toArray();
+      console.log('end aggregation')
+
+    // Add query to db so crawlers can check it out
+    queriesCollection.updateOne({ query: searchTerm }, {
+      $set: {
+        query: searchTerm,
+        date: new Date(),
+      },
+    }, { upsert: true });
+
+const elapsedTime = process.hrtime(timeStart)[1] / 1000000; // divide by a million to get nano to milli
+  console.log('send response')
+  var enddate = new Date() - startdate
+  console.info('Execution time: %dms', enddate)
+
+    reply.send({
+      aggregation,
+      elapsedTime,
+      enddate,
+    });
+      console.log('end request')
   });
 
   // Run the server!
